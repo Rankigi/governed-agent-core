@@ -46,10 +46,10 @@ async function ollamaInfer(prompt: string): Promise<{ latency_ms: number; respon
       stream: false,
     }),
   });
-  const data = await res.json();
+  const data = (await res.json()) as { response: string };
   return {
     latency_ms: Date.now() - start,
-    response: (data.response as string) ?? "",
+    response: data.response ?? "",
   };
 }
 

@@ -51,8 +51,8 @@ async function llmCall(messages: { role: string; content: string }[]): Promise<{
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: MODEL, prompt, stream: false }),
   });
-  const data = await res.json();
-  const content = (data.response as string) ?? "";
+  const data = (await res.json()) as { response: string };
+  const content = data.response ?? "";
 
   // Parse tool calls from LLM response
   // The LLM may mention tools — extract them
@@ -77,8 +77,8 @@ async function fakeToolExecution(toolName: string, _problem: string): Promise<st
       stream: false,
     }),
   });
-  const data = await res.json();
-  return (data.response as string) ?? "Done.";
+  const data = (await res.json()) as { response: string };
+  return data.response ?? "Done.";
 }
 
 /**
