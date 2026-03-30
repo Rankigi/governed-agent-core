@@ -4,6 +4,9 @@ dotenv.config();
 import { Agent } from "./agent";
 import { TelegramInterface } from "./telegram";
 import { rankigi } from "./rankigi";
+import { SelfModelStore } from "./self-model/store";
+import { OuterLoop } from "./self-model/outer-loop";
+import { printSelfModel } from "./self-model/dashboard";
 
 async function main() {
   console.log("");
@@ -50,11 +53,32 @@ async function main() {
   // Boot agent
   const agent = new Agent();
 
+  // Initialize self-model + outer loop
+  const agentId = process.env.RANKIGI_AGENT_ID ?? "UNREGISTERED";
+  const selfModelStore = new SelfModelStore(agentId);
+  selfModelStore.load(null); // Fresh start — will persist after first run
+  const outerLoop = new OuterLoop(selfModelStore);
+  outerLoop.start();
+  agent.attachSelfModel(selfModelStore, outerLoop);
+
+  if (process.env.SELF_MODEL_VERBOSE === "true") {
+    printSelfModel(selfModelStore.getModel());
+  }
+
+  const model = selfModelStore.getModel();
+  console.log(`  Self-model: v${model.version} | ${model.readiness_tier} | ${model.total_runs_observed} runs`);
+  console.log(`  Compiled patterns: ${model.timing_curve.compiled_patterns}`);
+  console.log(`  Outer loop: online`);
+
   // Register startup event
   await rankigi.observe({
     action: "agent_startup",
     input: { agent_id: process.env.RANKIGI_AGENT_ID },
-    output: { governance_connected: connected },
+    output: {
+      governance_connected: connected,
+      self_model_version: model.version,
+      readiness_tier: model.readiness_tier,
+    },
     execution_result: "success",
   });
 

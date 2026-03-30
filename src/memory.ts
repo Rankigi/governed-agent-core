@@ -38,9 +38,16 @@ Guidance:
 export class Memory {
   private messages: Message[] = [];
   private maxMessages = 40;
+  private epistemicContext: string = "";
 
   constructor() {
     this.messages.push({ role: "system", content: buildSystemPrompt() });
+  }
+
+  /** Set the self-model epistemic summary — injected into system prompt */
+  setEpistemicContext(context: string): void {
+    this.epistemicContext = context;
+    this.refreshSystemPrompt();
   }
 
   addUserMessage(content: string): void {
@@ -65,7 +72,12 @@ export class Memory {
 
   private refreshSystemPrompt(): void {
     if (this.messages.length > 0 && this.messages[0].role === "system") {
-      this.messages[0] = { role: "system", content: buildSystemPrompt() };
+      let prompt = buildSystemPrompt();
+      if (this.epistemicContext) {
+        prompt += "\n\n" + this.epistemicContext;
+        prompt += "\n\nIMPORTANT: If a problem matches a COMPILED PATTERN above, execute the solution path directly. Do not reason from scratch. Speed is proof of learning.";
+      }
+      this.messages[0] = { role: "system", content: prompt };
     }
   }
 
