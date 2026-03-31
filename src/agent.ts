@@ -5,14 +5,20 @@ import { getToolDefinitions, executeTool } from "./tools";
 import { rankigi } from "./rankigi";
 import type { SelfModelStore } from "./self-model/store";
 import type { OuterLoop } from "./self-model/outer-loop";
+import type { FrustrationDetector } from "./kairos/frustration";
 
 const MAX_ITERATIONS = 10;
+
+function sha256(data: string): string {
+  return crypto.createHash("sha256").update(data, "utf8").digest("hex");
+}
 
 export class Agent {
   private provider: BaseLLMProvider;
   private memory: Memory;
   private selfModelStore: SelfModelStore | null = null;
   private outerLoop: OuterLoop | null = null;
+  private frustration: FrustrationDetector | null = null;
   private runCounter = 0;
 
   constructor() {
@@ -25,6 +31,11 @@ export class Agent {
   attachSelfModel(store: SelfModelStore, loop: OuterLoop): void {
     this.selfModelStore = store;
     this.outerLoop = loop;
+  }
+
+  /** Attach the frustration detector */
+  attachFrustration(detector: FrustrationDetector): void {
+    this.frustration = detector;
   }
 
   async run(userMessage: string): Promise<string> {
@@ -98,6 +109,19 @@ export class Agent {
         };
         await rankigi.observe(outputEvent);
 
+        // Frustration: record output hash
+        if (this.frustration) {
+          const outputHash = sha256(content);
+          this.frustration.recordOutput(outputHash);
+        }
+
+        // Frustration: record confidence after run
+        if (this.frustration && this.selfModelStore) {
+          this.frustration.recordConfidence(
+            this.selfModelStore.getModel().confidence_score,
+          );
+        }
+
         // Notify outer loop — inference complete
         await this.outerLoop?.onChainEvent({
           action: "inference_complete",
@@ -131,6 +155,11 @@ export class Agent {
         this.memory.addToolResult(toolCall.id, result);
         toolsUsed.push(toolCall.name);
 
+        // Frustration: record tool call
+        if (this.frustration) {
+          this.frustration.recordToolCall(toolCall.name);
+        }
+
         const toolLatency = Date.now() - toolStart;
 
         // Notify outer loop — tool call complete
@@ -158,6 +187,16 @@ export class Agent {
       output: { response: fallback, reason: "max_iterations" },
       execution_result: "error",
     });
+
+    // Frustration: record output hash for the fallback too
+    if (this.frustration) {
+      this.frustration.recordOutput(sha256(fallback));
+      if (this.selfModelStore) {
+        this.frustration.recordConfidence(
+          this.selfModelStore.getModel().confidence_score,
+        );
+      }
+    }
 
     // Notify outer loop — inference complete with error
     await this.outerLoop?.onChainEvent({

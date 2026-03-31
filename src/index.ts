@@ -7,6 +7,9 @@ import { rankigi } from "./rankigi";
 import { SelfModelStore } from "./self-model/store";
 import { OuterLoop } from "./self-model/outer-loop";
 import { printSelfModel } from "./self-model/dashboard";
+import { KairosOuterLoop } from "./kairos/tick";
+import { FrustrationDetector } from "./kairos/frustration";
+import { createSeal, verifySeal } from "./beliefs/seal";
 
 async function main() {
   console.log("");
@@ -70,6 +73,17 @@ async function main() {
   console.log(`  Compiled patterns: ${model.timing_curve.compiled_patterns}`);
   console.log(`  Outer loop: online`);
 
+  // Initialize frustration detector
+  const frustration = new FrustrationDetector(rankigi);
+  agent.attachFrustration(frustration);
+
+  // Initialize KAIROS proactive tick loop
+  const beliefSeal = createSeal();
+  const kairos = new KairosOuterLoop(selfModelStore, rankigi, beliefSeal, verifySeal);
+  kairos.attachFrustration(frustration);
+  kairos.start();
+  console.log("  [KAIROS] Proactive outer loop active");
+
   // Register startup event
   await rankigi.observe({
     action: "agent_startup",
@@ -78,13 +92,15 @@ async function main() {
       governance_connected: connected,
       self_model_version: model.version,
       readiness_tier: model.readiness_tier,
+      kairos_enabled: true,
+      frustration_detection: true,
     },
     execution_result: "success",
   });
 
   // Start Telegram interface if configured
   if (process.env.TELEGRAM_BOT_TOKEN) {
-    const telegram = new TelegramInterface(agent);
+    const telegram = new TelegramInterface(agent, kairos, frustration);
     telegram.start();
   } else {
     console.log("  TELEGRAM_BOT_TOKEN not set — Telegram interface skipped");
@@ -100,6 +116,15 @@ async function main() {
       rankigi.flush();
     }
   }, 30000);
+
+  // Graceful shutdown
+  process.on("SIGINT", () => {
+    console.log("\n[SHUTDOWN] Stopping KAIROS...");
+    kairos.stop();
+    outerLoop.stop();
+    console.log("[SHUTDOWN] Agent stopped.");
+    process.exit(0);
+  });
 }
 
 main().catch((err) => {
