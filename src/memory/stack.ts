@@ -27,9 +27,8 @@ const STOP_WORDS = [
 interface RankigiRef {
   observe(event: {
     action: string;
-    input?: unknown;
-    output?: unknown;
-    payload?: unknown;
+    input: unknown;
+    output: unknown;
     execution_result: string;
   }): Promise<void>;
 }
@@ -143,8 +142,8 @@ export class MemoryStack {
     // 4. WRITE CHAIN EVENT
     await this.rankigi?.observe({
       action: "memory_pulse",
-      payload: {
-        query_keys,
+      input: { query_keys },
+      output: {
         layers_pulsed: candidates.length,
         layers_resonant: resonant.length,
         layers_surfaced: surfaced.length,
@@ -234,10 +233,12 @@ export class MemoryStack {
     // 6. Write chain event
     await this.rankigi?.observe({
       action: "memory_filed",
-      payload: {
+      input: {
         layer_hash: layer_hash.slice(0, 8),
         layer_type,
         parent_hash: parent_hash?.slice(0, 8),
+      },
+      output: {
         keys_indexed: keys.length,
         compression_ratio: index.compression_ratio,
         content_size_bytes: index.content_size_bytes,
