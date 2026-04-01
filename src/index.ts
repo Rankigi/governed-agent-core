@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import path from "path";
+import readline from "readline";
 import { Agent } from "./agent";
 import { TelegramInterface } from "./telegram";
 import { rankigi } from "./rankigi";
@@ -13,6 +14,7 @@ import { FrustrationDetector } from "./kairos/frustration";
 import { createSeal, verifySeal } from "./beliefs/seal";
 import { MemoryStack } from "./memory/stack";
 import { CORE_BELIEFS } from "./beliefs/core-beliefs";
+import { handleCommand, type CommandContext } from "./commands/handler";
 
 async function main() {
   console.log("");
@@ -137,9 +139,18 @@ async function main() {
     execution_result: "success",
   });
 
+  // Build shared command context
+  const cmdCtx: CommandContext = {
+    agent,
+    kairos,
+    frustration,
+    memoryStack,
+    selfModelStore,
+  };
+
   // Start Telegram interface if configured
   if (process.env.TELEGRAM_BOT_TOKEN) {
-    const telegram = new TelegramInterface(agent, kairos, frustration, memoryStack);
+    const telegram = new TelegramInterface(cmdCtx);
     telegram.start();
   } else {
     console.log("  TELEGRAM_BOT_TOKEN not set — Telegram interface skipped");
@@ -148,6 +159,35 @@ async function main() {
   console.log("");
   console.log("  Agent ready. All actions governed.");
   console.log("");
+
+  // Terminal readline interface
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: "> ",
+  });
+
+  rl.prompt();
+
+  rl.on("line", async (input) => {
+    const trimmed = input.trim();
+    if (trimmed) {
+      try {
+        const response = await handleCommand(trimmed, cmdCtx);
+        if (response) console.log(response);
+      } catch (err) {
+        console.error("[ERROR]", err);
+      }
+    }
+    rl.prompt();
+  });
+
+  rl.on("close", () => {
+    console.log("\n[SHUTDOWN] Readline closed.");
+    kairos.stop();
+    outerLoop.stop();
+    process.exit(0);
+  });
 
   // Periodic buffer flush
   setInterval(() => {
