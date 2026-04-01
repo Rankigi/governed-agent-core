@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import path from "path";
 import { Agent } from "./agent";
 import { TelegramInterface } from "./telegram";
 import { rankigi } from "./rankigi";
@@ -10,6 +11,8 @@ import { printSelfModel } from "./self-model/dashboard";
 import { KairosOuterLoop } from "./kairos/tick";
 import { FrustrationDetector } from "./kairos/frustration";
 import { createSeal, verifySeal } from "./beliefs/seal";
+import { MemoryStack } from "./memory/stack";
+import { CORE_BELIEFS } from "./beliefs/core-beliefs";
 
 async function main() {
   console.log("");
@@ -73,6 +76,39 @@ async function main() {
   console.log(`  Compiled patterns: ${model.timing_curve.compiled_patterns}`);
   console.log(`  Outer loop: online`);
 
+  // Initialize Akashic Pulse Memory stack
+  const storagePath = path.join(process.cwd(), ".memory", agentId);
+  const memoryStack = new MemoryStack(agentId, storagePath, rankigi);
+  await memoryStack.initialize();
+
+  // Create foundation layer on first startup
+  if (!memoryStack.hasFoundation()) {
+    const passportHash = agentId; // Agent passport ID as genesis reference
+    await memoryStack.file(
+      {
+        summary: "Foundation layer. Agent genesis context.",
+        delta: {
+          agent_id: agentId,
+          passport_hash: passportHash,
+          core_beliefs: CORE_BELIEFS.map((b) => b.title),
+          genesis_at: new Date().toISOString(),
+          model: process.env.LLM_PROVIDER ?? "auto",
+        },
+      },
+      "foundation",
+      undefined,
+      0,
+    );
+    console.log("  [MEMORY] Foundation layer created at genesis");
+  }
+
+  agent.attachMemoryStack(memoryStack);
+
+  const stackSize = memoryStack.getLayerCount();
+  const foundationHash = memoryStack.getFoundationHash();
+  console.log(`  [MEMORY] Stack: ${stackSize} layers | Foundation: ${foundationHash?.slice(0, 8)}...`);
+  console.log("  [MEMORY] Pulse ready: YES");
+
   // Initialize frustration detector
   const frustration = new FrustrationDetector(rankigi);
   agent.attachFrustration(frustration);
@@ -94,13 +130,16 @@ async function main() {
       readiness_tier: model.readiness_tier,
       kairos_enabled: true,
       frustration_detection: true,
+      memory_stack_layers: stackSize,
+      memory_foundation: foundationHash?.slice(0, 8),
+      pulse_ready: true,
     },
     execution_result: "success",
   });
 
   // Start Telegram interface if configured
   if (process.env.TELEGRAM_BOT_TOKEN) {
-    const telegram = new TelegramInterface(agent, kairos, frustration);
+    const telegram = new TelegramInterface(agent, kairos, frustration, memoryStack);
     telegram.start();
   } else {
     console.log("  TELEGRAM_BOT_TOKEN not set — Telegram interface skipped");

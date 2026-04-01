@@ -2,6 +2,7 @@ import TelegramBot from "node-telegram-bot-api";
 import { Agent } from "./agent";
 import type { KairosOuterLoop } from "./kairos/tick";
 import type { FrustrationDetector } from "./kairos/frustration";
+import type { MemoryStack } from "./memory/stack";
 
 const agentId = process.env.RANKIGI_AGENT_ID ?? "UNREGISTERED";
 
@@ -10,11 +11,13 @@ export class TelegramInterface {
   private agent: Agent;
   private kairos: KairosOuterLoop | null;
   private frustration: FrustrationDetector | null;
+  private memoryStack: MemoryStack | null;
 
   constructor(
     agent: Agent,
     kairos?: KairosOuterLoop | null,
     frustration?: FrustrationDetector | null,
+    memoryStack?: MemoryStack | null,
   ) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required");
@@ -23,6 +26,7 @@ export class TelegramInterface {
     this.agent = agent;
     this.kairos = kairos ?? null;
     this.frustration = frustration ?? null;
+    this.memoryStack = memoryStack ?? null;
   }
 
   start(): void {
@@ -122,6 +126,113 @@ export class TelegramInterface {
         "",
         `Output stall: ${state.output_stall_risk ? "⚠ RISK" : "NONE"}`,
       );
+
+      this.bot.sendMessage(msg.chat.id, lines.join("\n"));
+    });
+
+    // /prime — full agent status including memory stack
+    this.bot.onText(/\/prime/, (msg) => {
+      const selfLines = [
+        "AGENT PRIME",
+        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        `Passport: ${agentId}`,
+        `Status: ACTIVE`,
+        `Governed: YES`,
+        "",
+      ];
+
+      // Memory Stack section
+      if (this.memoryStack) {
+        const layerCount = this.memoryStack.getLayerCount();
+        const foundHash = this.memoryStack.getFoundationHash();
+        const indexKb = Math.round(this.memoryStack.getIndexSizeBytes() / 1024);
+
+        selfLines.push("[MEMORY STACK]");
+        selfLines.push(`\u25c8 Layers: ${layerCount}`);
+        selfLines.push(`\u25c8 Foundation: ${foundHash ? foundHash.slice(0, 8) + "..." : "none"}`);
+        selfLines.push(`\u25c8 Index size: ${indexKb}kb`);
+        selfLines.push(`\u25c8 Pulse ready: YES`);
+        selfLines.push("");
+      } else {
+        selfLines.push("[MEMORY STACK]");
+        selfLines.push("\u25c8 Not initialized");
+        selfLines.push("");
+      }
+
+      // KAIROS section
+      if (this.kairos) {
+        const log = this.kairos.getDailyLog();
+        const tickNum = this.kairos.getTickNumber();
+        selfLines.push("[KAIROS]");
+        selfLines.push(`\u25c8 Ticks: ${tickNum}`);
+        selfLines.push(`\u25c8 Actions today: ${log.filter((l) => l.includes("acted")).length}`);
+        selfLines.push("");
+      }
+
+      // Frustration section
+      if (this.frustration) {
+        const state = this.frustration.getState();
+        selfLines.push("[FRUSTRATION]");
+        selfLines.push(`\u25c8 Output stall: ${state.output_stall_risk ? "\u26a0 RISK" : "NONE"}`);
+        selfLines.push("");
+      }
+
+      this.bot.sendMessage(msg.chat.id, selfLines.join("\n"));
+    });
+
+    // /pulse <query> — manual pulse against the memory stack
+    this.bot.onText(/\/pulse\s+(.+)/, async (msg, match) => {
+      if (!this.memoryStack) {
+        this.bot.sendMessage(msg.chat.id, "Memory stack not initialized.");
+        return;
+      }
+
+      const query = match?.[1] ?? "";
+      if (!query) {
+        this.bot.sendMessage(msg.chat.id, "Usage: /pulse <query>");
+        return;
+      }
+
+      const result = await this.memoryStack.pulse(query, {
+        max_surface: 5,
+        min_resonance: 20,
+      });
+
+      const lines = [
+        `PULSE \u2014 "${query}"`,
+        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        `${result.pulse_ms}ms | ${result.total_layers_pulsed} layers pulsed`,
+        "",
+      ];
+
+      if (result.resonant_layers.length > 0) {
+        lines.push(`RESONANT (${result.resonant_layers.length}):`);
+        for (const r of result.resonant_layers) {
+          const summary = result.surfaced.find(
+            (s) => s.index.layer_hash === r.layer_hash,
+          )?.content.summary ?? "(not surfaced)";
+          lines.push(`\u25c8 [${r.resonance_score}] ${r.layer_type} #${r.run_index}`);
+          lines.push(`  "${summary.slice(0, 60)}"`);
+          lines.push(`  Keys: ${r.keys_matched.join(", ")}`);
+          lines.push("");
+        }
+      } else {
+        lines.push("No resonant layers found.");
+        lines.push("");
+      }
+
+      // Estimate tokens saved
+      const totalContentBytes = result.surfaced.reduce(
+        (s, l) => s + l.index.content_size_bytes, 0,
+      );
+      const deltaBytes = result.surfaced.reduce(
+        (s, l) => s + l.index.delta_size_bytes, 0,
+      );
+      const tokensSaved = Math.round((totalContentBytes - deltaBytes) / 4);
+
+      lines.push(`Surfaced: ${result.layers_surfaced} layers`);
+      lines.push(`Tokens saved: ~${tokensSaved.toLocaleString()} vs full load`);
+      lines.push(`Compression: ${result.compression_ratio}%`);
 
       this.bot.sendMessage(msg.chat.id, lines.join("\n"));
     });

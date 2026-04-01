@@ -39,6 +39,7 @@ export class Memory {
   private messages: Message[] = [];
   private maxMessages = 40;
   private epistemicContext: string = "";
+  private memoryContext: string = "";
 
   constructor() {
     this.messages.push({ role: "system", content: buildSystemPrompt() });
@@ -47,6 +48,12 @@ export class Memory {
   /** Set the self-model epistemic summary — injected into system prompt */
   setEpistemicContext(context: string): void {
     this.epistemicContext = context;
+    this.refreshSystemPrompt();
+  }
+
+  /** Set Akashic pulse memory context — surfaced memories injected into system prompt */
+  setMemoryContext(context: string): void {
+    this.memoryContext = context;
     this.refreshSystemPrompt();
   }
 
@@ -76,6 +83,9 @@ export class Memory {
       if (this.epistemicContext) {
         prompt += "\n\n" + this.epistemicContext;
         prompt += "\n\nIMPORTANT: If a problem matches a COMPILED PATTERN above, execute the solution path directly. Do not reason from scratch. Speed is proof of learning.";
+      }
+      if (this.memoryContext) {
+        prompt += "\n\n" + this.memoryContext;
       }
       this.messages[0] = { role: "system", content: prompt };
     }

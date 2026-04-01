@@ -6,6 +6,7 @@ import { rankigi } from "./rankigi";
 import type { SelfModelStore } from "./self-model/store";
 import type { OuterLoop } from "./self-model/outer-loop";
 import type { FrustrationDetector } from "./kairos/frustration";
+import type { MemoryStack } from "./memory/stack";
 
 const MAX_ITERATIONS = 10;
 
@@ -19,6 +20,8 @@ export class Agent {
   private selfModelStore: SelfModelStore | null = null;
   private outerLoop: OuterLoop | null = null;
   private frustration: FrustrationDetector | null = null;
+  private memoryStack: MemoryStack | null = null;
+  private lastLayerHash: string | null = null;
   private runCounter = 0;
 
   constructor() {
@@ -38,6 +41,11 @@ export class Agent {
     this.frustration = detector;
   }
 
+  /** Attach the Akashic Pulse Memory stack */
+  attachMemoryStack(stack: MemoryStack): void {
+    this.memoryStack = stack;
+  }
+
   async run(userMessage: string): Promise<string> {
     const runId = crypto.randomUUID();
     const runStart = Date.now();
@@ -49,10 +57,32 @@ export class Agent {
       this.memory.setEpistemicContext(this.selfModelStore.getEpistemicSummary());
     }
 
-    // 2. Add user message to memory
+    // 2. PULSE memory for context before processing
+    if (this.memoryStack) {
+      const pulse = await this.memoryStack.pulse(userMessage, {
+        max_surface: 3,
+        min_resonance: 25,
+      });
+
+      if (pulse.surfaced.length > 0) {
+        const memory_context = pulse.surfaced
+          .map((l) => l.content.summary)
+          .join("\n");
+
+        this.memory.setMemoryContext(
+          `[MEMORY \u2014 ${pulse.pulse_ms}ms]\n${memory_context}`,
+        );
+
+        console.log(
+          `[PULSE] Found ${pulse.surfaced.length} relevant memories in ${pulse.pulse_ms}ms`,
+        );
+      }
+    }
+
+    // 3. Add user message to memory
     this.memory.addUserMessage(userMessage);
 
-    // 3. Observe user input + notify outer loop
+    // 4. Observe user input + notify outer loop
     const inputEvent = {
       action: "agent_input",
       input: { message: userMessage },
@@ -66,7 +96,7 @@ export class Agent {
       occurred_at: new Date().toISOString(),
     });
 
-    // 4. Check for compiled pattern
+    // 5. Check for compiled pattern
     let hasCompiledPattern = false;
     if (this.selfModelStore) {
       const sig = userMessage.slice(0, 100);
@@ -77,7 +107,7 @@ export class Agent {
       }
     }
 
-    // 5. Reasoning loop
+    // 6. Reasoning loop
     for (let i = 0; i < MAX_ITERATIONS; i++) {
       const response = await this.provider.call(
         this.memory.getMessages(),
@@ -134,6 +164,41 @@ export class Agent {
           },
           occurred_at: new Date().toISOString(),
         });
+
+        // Subconscious files the run to Akashic memory
+        if (this.memoryStack) {
+          const confidenceSnapshot = this.selfModelStore
+            ? this.selfModelStore.getModel().confidence_score
+            : undefined;
+
+          const toolOutcomes = this.selfModelStore
+            ? Object.values(this.selfModelStore.getModel().tool_performance)
+                .filter((t) => toolsUsed.includes(t.tool_id))
+                .map((t) => ({
+                  tool: t.tool_name,
+                  success_rate: t.success_rate,
+                  avg_ms: t.avg_latency_ms,
+                }))
+            : undefined;
+
+          const filed = await this.memoryStack.file(
+            {
+              summary: `Run ${this.runCounter}: ${userMessage.slice(0, 100)}`,
+              delta: {
+                tools_used: toolsUsed,
+                outcome: "success",
+                solve_time_ms: Date.now() - runStart,
+                had_compiled_pattern: hasCompiledPattern,
+              },
+              confidence_snapshot: confidenceSnapshot,
+              tool_outcomes: toolOutcomes,
+            },
+            "task_history",
+            this.lastLayerHash ?? undefined,
+            this.runCounter,
+          );
+          this.lastLayerHash = filed.index.layer_hash;
+        }
 
         return content;
       }
