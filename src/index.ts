@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import path from "path";
+import { createHash } from "crypto";
 import readline from "readline";
 import { Agent } from "./agent";
 import { TelegramInterface } from "./telegram";
@@ -11,10 +11,11 @@ import { OuterLoop } from "./self-model/outer-loop";
 import { printSelfModel } from "./self-model/dashboard";
 import { KairosOuterLoop } from "./kairos/tick";
 import { FrustrationDetector } from "./kairos/frustration";
-import { createSeal, verifySeal } from "./beliefs/seal";
+import { createSeal, verifySeal, getSealHash } from "./beliefs/seal";
 import { MemoryStack } from "./memory/stack";
 import { CORE_BELIEFS } from "./beliefs/core-beliefs";
 import { handleCommand, type CommandContext } from "./commands/handler";
+import { PassportManager } from "./passport/loader";
 
 async function main() {
   console.log("");
@@ -58,11 +59,31 @@ async function main() {
     console.log("  \u26a0 RANKIGI unreachable — events will be buffered locally");
   }
 
+  // Initialize passport data layer
+  const agentId = process.env.RANKIGI_AGENT_ID ?? "UNREGISTERED";
+  const passport_hash = process.env.PASSPORT_HASH
+    || createHash("sha256").update(agentId).digest("hex").slice(0, 16);
+
+  const passport = new PassportManager(passport_hash);
+  const passportData = await passport.load();
+
+  // Seal beliefs into passport on first boot
+  if (!passportData.core_beliefs_hash) {
+    const beliefSealForPassport = createSeal();
+    const beliefsHash = getSealHash(beliefSealForPassport);
+    await passport.sealBeliefs(
+      CORE_BELIEFS.map((b) => b.title),
+      beliefsHash,
+    );
+    console.log("  [PASSPORT] Beliefs sealed at genesis");
+  }
+
+  console.log(`  [PASSPORT] ${passportData.display_name} | Hash: ${passport_hash.slice(0, 8)}...`);
+  console.log(`  [PASSPORT] Engine: ${passportData.current_engine.provider}/${passportData.current_engine.model}`);
+  console.log(`  [PASSPORT] Total runs (all engines): ${passportData.total_runs} | Patterns: ${passportData.compiled_patterns.length}`);
+
   // Boot agent
   const agent = new Agent();
-
-  // Initialize self-model + outer loop
-  const agentId = process.env.RANKIGI_AGENT_ID ?? "UNREGISTERED";
   const selfModelStore = new SelfModelStore(agentId);
   selfModelStore.load(null); // Fresh start — will persist after first run
   const outerLoop = new OuterLoop(selfModelStore);
@@ -78,9 +99,8 @@ async function main() {
   console.log(`  Compiled patterns: ${model.timing_curve.compiled_patterns}`);
   console.log(`  Outer loop: online`);
 
-  // Initialize Akashic Pulse Memory stack
-  const storagePath = path.join(process.cwd(), ".memory", agentId);
-  const memoryStack = new MemoryStack(agentId, storagePath, rankigi);
+  // Initialize Akashic Pulse Memory stack — stored inside passport
+  const memoryStack = new MemoryStack(agentId, passportData.memory_stack_path, rankigi);
   await memoryStack.initialize();
 
   // Create foundation layer on first startup
@@ -106,8 +126,10 @@ async function main() {
 
   agent.attachMemoryStack(memoryStack);
 
+  // Sync memory stats into passport
   const stackSize = memoryStack.getLayerCount();
   const foundationHash = memoryStack.getFoundationHash();
+  await passport.updateMemoryStats(stackSize, foundationHash ?? "");
   console.log(`  [MEMORY] Stack: ${stackSize} layers | Foundation: ${foundationHash?.slice(0, 8)}...`);
   console.log("  [MEMORY] Pulse ready: YES");
 
@@ -135,6 +157,10 @@ async function main() {
       memory_stack_layers: stackSize,
       memory_foundation: foundationHash?.slice(0, 8),
       pulse_ready: true,
+      passport_hash: passport_hash.slice(0, 8),
+      passport_engine: `${passportData.current_engine.provider}/${passportData.current_engine.model}`,
+      passport_total_runs: passportData.total_runs,
+      passport_patterns: passportData.compiled_patterns.length,
     },
     execution_result: "success",
   });
@@ -146,6 +172,7 @@ async function main() {
     frustration,
     memoryStack,
     selfModelStore,
+    passport,
   };
 
   // Start Telegram interface if configured

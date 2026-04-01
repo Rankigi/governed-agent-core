@@ -10,7 +10,9 @@ import type { KairosOuterLoop } from "../kairos/tick";
 import type { FrustrationDetector } from "../kairos/frustration";
 import type { MemoryStack } from "../memory/stack";
 import type { SelfModelStore } from "../self-model/store";
+import type { PassportManager } from "../passport/loader";
 import { CORE_BELIEFS } from "../beliefs/core-beliefs";
+import { rankigi } from "../rankigi";
 
 const agentId = process.env.RANKIGI_AGENT_ID ?? "UNREGISTERED";
 
@@ -20,6 +22,7 @@ export interface CommandContext {
   frustration: FrustrationDetector | null;
   memoryStack: MemoryStack | null;
   selfModelStore: SelfModelStore | null;
+  passport: PassportManager | null;
 }
 
 /**
@@ -67,6 +70,10 @@ export async function handleCommand(
         return cmdForget();
       case "/imagine":
         return cmdImagine(args, ctx);
+      case "/passport":
+        return cmdPassport(ctx);
+      case "/switch":
+        return cmdSwitch(args, ctx);
       default:
         return `Unknown command: ${cmd}`;
     }
@@ -108,6 +115,19 @@ function cmdPrime(ctx: CommandContext): string {
     "Governed: YES",
     "",
   ];
+
+  // Passport
+  if (ctx.passport?.isLoaded()) {
+    const p = ctx.passport.get();
+    lines.push("[PASSPORT]");
+    lines.push(`\u25c8 Born: ${p.born_at.slice(0, 10)}`);
+    lines.push(`\u25c8 Engines used: ${p.engine_history.length + 1}`);
+    lines.push(`\u25c8 Current: ${p.current_engine.provider}/${p.current_engine.model}`);
+    lines.push(`\u25c8 Total runs (all engines): ${p.total_runs}`);
+    lines.push(`\u25c8 Patterns: ${p.compiled_patterns.length}`);
+    lines.push(`\u25c8 Memory: ${p.memory_layer_count} layers`);
+    lines.push("");
+  }
 
   // Memory Stack
   if (ctx.memoryStack) {
@@ -462,4 +482,131 @@ async function cmdImagine(scenario: string, ctx: CommandContext): Promise<string
     `What would happen, what tools would you use, what risks exist? ` +
     `Scenario: ${scenario}`,
   );
+}
+
+function cmdPassport(ctx: CommandContext): string {
+  if (!ctx.passport?.isLoaded()) return "Passport not loaded.";
+
+  const p = ctx.passport.get();
+  const lines = [
+    `PASSPORT \u2014 ${p.display_name}`,
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    `ID:      ${p.passport_id}`,
+    `Hash:    ${p.passport_hash}...`,
+    `Born:    ${p.born_at.slice(0, 10)}`,
+    "",
+    "ENGINE HISTORY",
+    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+  ];
+
+  for (const e of p.engine_history) {
+    lines.push(`\u2713 ${e.provider}/${e.model}`);
+    lines.push(`  Runs: ${e.runs_completed} | Patterns: ${e.patterns_compiled}`);
+    lines.push(`  ${e.started_at.slice(0, 10)} \u2192 ${e.ended_at?.slice(0, 10) ?? "?"}`);
+    if (e.transition_brief_hash) {
+      lines.push(`  Brief: ${e.transition_brief_hash.slice(0, 8)}...`);
+    }
+    lines.push("");
+  }
+
+  // Current engine
+  lines.push(`\u2192 ${p.current_engine.provider}/${p.current_engine.model}`);
+  lines.push(`  Runs: ${p.current_engine.runs_completed} (current)`);
+  lines.push(`  Started: ${p.current_engine.started_at.slice(0, 10)}`);
+  lines.push("");
+
+  // Compiled patterns
+  lines.push("COMPILED PATTERNS");
+  lines.push("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  if (p.compiled_patterns.length === 0) {
+    lines.push("(none yet)");
+  } else {
+    for (const pat of p.compiled_patterns.slice(0, 10)) {
+      lines.push(`${pat.id}. ${pat.pattern} \u2192 ${pat.solution_path.slice(0, 40)}`);
+    }
+  }
+  lines.push("");
+
+  // Memory
+  lines.push("MEMORY");
+  lines.push("\u2500\u2500\u2500\u2500\u2500\u2500");
+  lines.push(`Layers: ${p.memory_layer_count}`);
+  lines.push(`Foundation: ${p.memory_foundation_hash ? p.memory_foundation_hash.slice(0, 8) + "..." : "none"}`);
+  lines.push("");
+
+  // Trust
+  lines.push("TRUST");
+  lines.push("\u2500\u2500\u2500\u2500\u2500");
+  lines.push(`Standing: ${p.current_trust.standing.toUpperCase()}`);
+  lines.push(`Compliance: ${p.current_trust.compliance_score}/100`);
+  lines.push(`Confidence: ${p.current_trust.confidence_score}/100`);
+  lines.push("");
+
+  // Beliefs
+  lines.push("BELIEFS");
+  lines.push("\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  lines.push(`${p.core_beliefs.length} core beliefs \u2014 sealed at genesis`);
+  lines.push(`Hash: ${p.core_beliefs_hash ? p.core_beliefs_hash.slice(0, 16) + "..." : "not sealed"}`);
+
+  return lines.join("\n");
+}
+
+async function cmdSwitch(args: string, ctx: CommandContext): Promise<string> {
+  if (!ctx.passport?.isLoaded()) return "Passport not loaded.";
+  if (!args) return "Usage: /switch <provider> <model>\nExample: /switch ollama llama3.2:1b";
+
+  const parts = args.split(/\s+/);
+  if (parts.length < 2) return "Usage: /switch <provider> <model>\nExample: /switch anthropic claude-sonnet-4-6";
+
+  const [new_provider, new_model] = parts;
+  const p = ctx.passport.get();
+
+  // Check if already on this engine
+  if (p.current_engine.provider === new_provider && p.current_engine.model === new_model) {
+    return `Already running ${new_provider}/${new_model}.`;
+  }
+
+  const lines = [
+    "Switching engine.",
+    "All data preserved.",
+    "Generating transition brief...",
+    "",
+  ];
+
+  const brief = await ctx.passport.switchEngine(
+    new_provider,
+    new_model,
+    `Manual switch via /switch command`,
+    rankigi,
+  );
+
+  lines.push("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+  lines.push(`TRANSITION BRIEF \u2014 ${brief.brief_id}`);
+  lines.push("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+  lines.push("");
+  lines.push(`FROM: ${brief.from_engine.provider}/${brief.from_engine.model}`);
+  lines.push(`  ${brief.learned.total_runs} runs | ${brief.learned.patterns_compiled.length} patterns | ${brief.learned.memory_layers} memories`);
+  lines.push("");
+  lines.push(`TO: ${brief.to_engine.provider}/${brief.to_engine.model}`);
+  lines.push("");
+  lines.push("HANDOFF MESSAGE:");
+  lines.push("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  lines.push(brief.handoff_message);
+  lines.push("");
+  lines.push("PRESERVED:");
+  lines.push(`\u25c8 ${brief.inherits.compiled_patterns} compiled patterns`);
+  lines.push(`\u25c8 ${brief.inherits.memory_layers} memory layers`);
+  lines.push(`\u25c8 ${brief.inherits.core_beliefs.length} core beliefs (sealed)`);
+  lines.push(`\u25c8 Chain index: ${brief.inherits.chain_index}`);
+  lines.push("");
+  lines.push("INTEGRITY");
+  lines.push("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  lines.push(`Brief hash: ${brief.brief_hash.slice(0, 16)}...`);
+  lines.push("Chain event: recorded \u2713");
+  lines.push("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+  lines.push("");
+  lines.push("Restart the agent to use the new engine:");
+  lines.push("  npm start");
+
+  return lines.join("\n");
 }
