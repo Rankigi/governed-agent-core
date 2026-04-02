@@ -6,26 +6,32 @@ import { OllamaProvider } from "./ollama";
 export function createProvider(): BaseLLMProvider {
   const requested = process.env.LLM_PROVIDER?.toLowerCase();
 
-  const providers: Record<string, BaseLLMProvider> = {
-    openai: new OpenAIProvider(),
-    anthropic: new AnthropicProvider(),
-    ollama: new OllamaProvider(),
-  };
-
-  // Use explicitly requested provider
-  if (requested && providers[requested]) {
-    if (!providers[requested].isAvailable()) {
-      throw new Error(
-        `Provider "${requested}" requested but not configured. Check your .env file.`,
-      );
-    }
-    return providers[requested];
+  // Only instantiate the requested provider
+  if (requested === "anthropic") {
+    const p = new AnthropicProvider();
+    if (!p.isAvailable()) throw new Error('Provider "anthropic" requested but ANTHROPIC_API_KEY not set.');
+    return p;
+  }
+  if (requested === "ollama") {
+    const p = new OllamaProvider();
+    if (!p.isAvailable()) throw new Error('Provider "ollama" requested but OLLAMA_BASE_URL not set.');
+    return p;
+  }
+  if (requested === "openai") {
+    const p = new OpenAIProvider();
+    if (!p.isAvailable()) throw new Error('Provider "openai" requested but OPENAI_API_KEY not set.');
+    return p;
   }
 
-  // Auto-detect from available API keys
-  if (providers.openai.isAvailable()) return providers.openai;
-  if (providers.anthropic.isAvailable()) return providers.anthropic;
-  if (providers.ollama.isAvailable()) return providers.ollama;
+  // Auto-detect — only instantiate one at a time
+  const openai = new OpenAIProvider();
+  if (openai.isAvailable()) return openai;
+
+  const anthropic = new AnthropicProvider();
+  if (anthropic.isAvailable()) return anthropic;
+
+  const ollama = new OllamaProvider();
+  if (ollama.isAvailable()) return ollama;
 
   throw new Error(
     "No LLM provider configured. Add one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BASE_URL to your .env file.",
