@@ -2,7 +2,7 @@ import { rankigi } from "../rankigi";
 
 export const calculator = {
   name: "calculator",
-  description: "Evaluate a mathematical expression. Supports basic arithmetic, exponents, and common math functions.",
+  description: "Evaluate a mathematical expression with numbers. You MUST pass the 'expression' argument as a string like '2 + 3 * 4'. Only use this for math with numbers.",
   parameters: {
     type: "object",
     properties: {
@@ -12,6 +12,11 @@ export const calculator = {
   },
   async execute(args: { expression: string }): Promise<string> {
     return rankigi.wrap("calculator", async () => {
+      // Guard: expression must be a non-empty string
+      if (!args.expression || typeof args.expression !== "string") {
+        return "Error: no math expression provided. Pass an 'expression' argument like '2 + 3 * 4'.";
+      }
+
       // Sanitize: only allow numbers, operators, parentheses, spaces, and math functions
       const sanitized = args.expression.replace(/[^0-9+\-*/().%^ \t\n]/g, "");
 
