@@ -125,6 +125,7 @@ async function main() {
   }
 
   agent.attachMemoryStack(memoryStack);
+  agent.attachPassport(passport);
 
   // Sync memory stats into passport
   const stackSize = memoryStack.getLayerCount();

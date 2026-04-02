@@ -7,6 +7,7 @@ import type { SelfModelStore } from "./self-model/store";
 import type { OuterLoop } from "./self-model/outer-loop";
 import type { FrustrationDetector } from "./kairos/frustration";
 import type { MemoryStack } from "./memory/stack";
+import type { PassportManager } from "./passport/loader";
 
 const MAX_ITERATIONS = 10;
 
@@ -21,6 +22,7 @@ export class Agent {
   private outerLoop: OuterLoop | null = null;
   private frustration: FrustrationDetector | null = null;
   private memoryStack: MemoryStack | null = null;
+  private passport: PassportManager | null = null;
   private lastLayerHash: string | null = null;
   private runCounter = 0;
 
@@ -44,6 +46,11 @@ export class Agent {
   /** Attach the Akashic Pulse Memory stack */
   attachMemoryStack(stack: MemoryStack): void {
     this.memoryStack = stack;
+  }
+
+  /** Attach the passport data layer */
+  attachPassport(pm: PassportManager): void {
+    this.passport = pm;
   }
 
   async run(userMessage: string): Promise<string> {
@@ -198,6 +205,17 @@ export class Agent {
             this.runCounter,
           );
           this.lastLayerHash = filed.index.layer_hash;
+        }
+
+        // Update passport after every run
+        if (this.passport) {
+          await this.passport.updateAfterRun({
+            new_patterns: [],
+            memory_layers_filed: this.memoryStack ? 1 : 0,
+            confidence: this.selfModelStore?.getModel().confidence_score ?? 0,
+            chain_index: 0,
+            last_event_hash: "",
+          });
         }
 
         return content;

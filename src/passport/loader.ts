@@ -131,6 +131,7 @@ export class PassportManager {
 
     await fs.mkdir(path.dirname(this.passport_path), { recursive: true });
     await fs.writeFile(this.passport_path, JSON.stringify(this.data, null, 2));
+    console.log(`[PASSPORT] Saved. Total runs: ${this.data.total_runs}`);
   }
 
   /** Seal beliefs into the passport — called once at genesis */

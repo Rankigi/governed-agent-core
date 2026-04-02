@@ -52,6 +52,9 @@ class RankigiObserver {
       },
     };
 
+    console.log(`[RANKIGI] Sending event to: ${this.baseUrl}/api/ingest`);
+    console.log(`[RANKIGI] Agent ID: ${payload.agent_id} | Action: ${event.action}`);
+
     try {
       const res = await axios.post(`${this.baseUrl}/api/ingest`, payload, {
         headers: {
