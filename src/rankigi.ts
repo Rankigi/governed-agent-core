@@ -56,7 +56,7 @@ class RankigiObserver {
       const res = await axios.post(`${this.baseUrl}/api/ingest`, payload, {
         headers: {
           "Content-Type": "application/json",
-          "X-API-Key": this.apiKey,
+          "Authorization": `Bearer ${this.apiKey}`,
         },
         timeout: 5000,
       });
