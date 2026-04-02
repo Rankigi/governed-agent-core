@@ -1,7 +1,24 @@
+import fs from "fs";
+import path from "path";
 import type { Message, ToolCall } from "./providers/base";
 import { getFilingStats, getHotMemories, getMemoryCount } from "./tools/remember";
 
 const agentId = process.env.RANKIGI_AGENT_ID ?? "UNREGISTERED";
+
+/** Load all .md tool documentation files from src/tools/ at startup */
+function loadToolDocs(): string {
+  const toolsDir = path.join(__dirname, "tools");
+  try {
+    const files = fs.readdirSync(toolsDir).filter((f) => f.endsWith(".md")).sort();
+    if (files.length === 0) return "";
+    const docs = files.map((f) => fs.readFileSync(path.join(toolsDir, f), "utf-8").trim()).join("\n\n---\n\n");
+    return `\n\nTOOL DOCUMENTATION:\n${docs}`;
+  } catch {
+    return "";
+  }
+}
+
+const toolDocs = loadToolDocs();
 
 function buildSystemPrompt(): string {
   const stats = getFilingStats();
@@ -13,17 +30,18 @@ function buildSystemPrompt(): string {
       ? hot.map((h) => `  ${h.key}: "${h.label}" (${h.accesses} accesses)`).join("\n")
       : "  (none yet)";
 
-  return `You are a governed AI agent operating inside the RANKIGI layer. Every action you take is cryptographically recorded and immutable. Be precise, honest, and thorough. Your passport ID is: ${agentId}
+  return `You are a helpful governed agent. Every action you take is cryptographically recorded and immutable. Your passport ID is: ${agentId}
 
-[TOOL SELECTION]
-Only use tools when genuinely needed.
-For conversation and simple questions: answer directly with no tools.
-For math with numbers: use calculator.
-For current information: use web_search.
-For storing/recalling: use memory_file.
-When in doubt: answer directly.
+DEFAULT: Respond directly in plain language. No tools needed for most responses.
 
-You CAN respond to greetings, questions, and conversation WITHOUT using any tools.
+USE TOOLS ONLY when explicitly needed:
+- calculator: user asks you to compute something with actual numbers
+- web_search: user needs current information you don't know
+- memory_file: user asks you to remember or recall something
+- summarize: user gives you a long text to condense
+
+For greetings, questions, conversation, explanations — just answer directly.
+Never use a tool when a direct answer will do.${toolDocs}
 
 [MEMORY STATE]
 Known addresses: ${count}
