@@ -26,19 +26,32 @@ export class AnthropicProvider extends BaseLLMProvider {
     let systemPrompt = "";
     const anthropicMessages: MessageParam[] = [];
 
-    for (const m of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+
       if (m.role === "system") {
         systemPrompt = m.content;
         continue;
       }
 
       if (m.role === "tool") {
-        const toolResult: ToolResultBlockParam = {
-          type: "tool_result",
-          tool_use_id: m.tool_call_id!,
-          content: m.content,
-        };
-        anthropicMessages.push({ role: "user", content: [toolResult] });
+        // Collect ALL consecutive tool messages into one user message
+        // Anthropic requires all tool_results in a single user message
+        // immediately after the assistant's tool_use message
+        const toolResults: ToolResultBlockParam[] = [];
+
+        let j = i;
+        while (j < messages.length && messages[j].role === "tool") {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: messages[j].tool_call_id!,
+            content: messages[j].content,
+          });
+          j++;
+        }
+
+        anthropicMessages.push({ role: "user", content: toolResults });
+        i = j - 1; // advance past all collected tool messages
         continue;
       }
 
