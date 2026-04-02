@@ -122,8 +122,36 @@ export class Memory {
   private trim(): void {
     if (this.messages.length <= this.maxMessages) return;
     const system = this.messages[0];
-    const recent = this.messages.slice(-(this.maxMessages - 1));
-    this.messages = [system, ...recent];
+    const rest = this.messages.slice(1);
+
+    // Find safe cut point — never orphan tool_use/tool_result pairs
+    let cutIndex = Math.max(0, rest.length - (this.maxMessages - 1));
+
+    // Advance past unsafe positions
+    while (cutIndex < rest.length) {
+      const msg = rest[cutIndex];
+
+      // Landing on a tool_result — its assistant tool_use is before us.
+      // Skip forward past all consecutive tool messages.
+      if (msg.role === "tool") {
+        cutIndex++;
+        continue;
+      }
+
+      // Landing on an assistant with tool_calls — must keep its results too.
+      // Skip forward past this assistant + all following tool messages.
+      if (msg.role === "assistant" && msg.tool_calls?.length) {
+        let j = cutIndex + 1;
+        while (j < rest.length && rest[j].role === "tool") j++;
+        cutIndex = j;
+        continue;
+      }
+
+      // Safe position — user or plain assistant message
+      break;
+    }
+
+    this.messages = [system, ...rest.slice(cutIndex)];
   }
 
   clear(): void {

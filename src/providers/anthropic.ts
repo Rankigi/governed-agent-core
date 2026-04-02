@@ -82,11 +82,14 @@ export class AnthropicProvider extends BaseLLMProvider {
       input_schema: t.parameters as Anthropic.Tool.InputSchema,
     }));
 
+    // Sanitize: strip orphaned tool_use blocks before sending
+    const sanitized = this.sanitizeMessages(anthropicMessages);
+
     const response = await this.client.messages.create({
       model: this.model,
       max_tokens: 4096,
       system: systemPrompt || undefined,
-      messages: anthropicMessages,
+      messages: sanitized,
       tools: anthropicTools.length > 0 ? anthropicTools : undefined,
     });
 
@@ -114,5 +117,57 @@ export class AnthropicProvider extends BaseLLMProvider {
         output_tokens: response.usage.output_tokens,
       },
     };
+  }
+
+  /**
+   * Safety net: strip any assistant tool_use blocks that lack
+   * a corresponding tool_result in the conversation.
+   * Prevents 400 "tool_use ids without tool_result blocks".
+   */
+  private sanitizeMessages(messages: MessageParam[]): MessageParam[] {
+    // Collect all tool_result ids
+    const resultIds = new Set<string>();
+    for (const m of messages) {
+      if (m.role === "user" && Array.isArray(m.content)) {
+        for (const block of m.content) {
+          if (typeof block === "object" && "type" in block && block.type === "tool_result") {
+            resultIds.add((block as ToolResultBlockParam).tool_use_id);
+          }
+        }
+      }
+    }
+
+    // Strip orphaned tool_use blocks from assistant messages
+    const sanitized: MessageParam[] = [];
+    for (const m of messages) {
+      if (m.role === "assistant" && Array.isArray(m.content)) {
+        const hasToolUse = m.content.some(
+          (b) => typeof b === "object" && "type" in b && b.type === "tool_use",
+        );
+
+        if (hasToolUse) {
+          // Check if ALL tool_use ids have matching results
+          const allMatched = m.content.every((b) => {
+            if (typeof b !== "object" || !("type" in b) || b.type !== "tool_use") return true;
+            return resultIds.has((b as ToolUseBlockParam).id);
+          });
+
+          if (!allMatched) {
+            // Keep text blocks only, drop tool_use blocks
+            const textBlocks = m.content.filter(
+              (b) => typeof b === "object" && "type" in b && b.type === "text",
+            );
+            if (textBlocks.length > 0) {
+              sanitized.push({ role: "assistant", content: textBlocks });
+            }
+            // If no text blocks either, skip the message entirely
+            continue;
+          }
+        }
+      }
+      sanitized.push(m);
+    }
+
+    return sanitized;
   }
 }
