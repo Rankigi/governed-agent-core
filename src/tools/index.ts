@@ -3,6 +3,7 @@ import { webSearch } from "./web-search";
 import { calculator } from "./calculator";
 import { summarize } from "./summarize";
 import { remember } from "./remember";
+import { eridu } from "./eridu";
 
 interface Tool {
   name: string;
@@ -11,7 +12,7 @@ interface Tool {
   execute(args: Record<string, unknown>): Promise<string>;
 }
 
-export const TOOLS: Tool[] = [webSearch, calculator, summarize, remember];
+export const TOOLS: Tool[] = [webSearch, calculator, summarize, remember, eridu];
 
 export function getToolDefinitions(): ToolDefinition[] {
   return TOOLS.map((t) => ({
