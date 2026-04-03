@@ -7,14 +7,24 @@
 
 export interface CompiledPattern {
   id: string;
+  /** Original triggering input (legacy) or category id */
   pattern: string;
+  /** Category-based matching */
+  category: string;
+  category_label: string;
+  /** Example inputs that triggered this pattern (max 5) */
+  example_inputs: string[];
   solution_path: string;
+  tool_hint: string | null;
   confidence: number;
   compiled_at: string;
   /** Which engine compiled this pattern */
   compiled_by_engine: string;
   success_count: number;
   failure_count: number;
+  /** How many novel inputs this pattern generalized to */
+  novel_matches: number;
+  last_matched_at: string;
 }
 
 export interface EngineRecord {

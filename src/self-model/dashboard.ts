@@ -1,4 +1,5 @@
-import type { SelfModel } from "./types";
+import type { SelfModel, PatternCategory } from "./types";
+import { getCategoryLabel, getCategoryToolHint } from "./types";
 
 export function printSelfModel(model: SelfModel): void {
   const tc = model.timing_curve;
@@ -61,10 +62,15 @@ export function printSelfModel(model: SelfModel): void {
     console.log("║ (none compiled yet)           ║");
   }
   for (const p of compiledPatterns) {
-    const sig = p.problem_signature.slice(0, 16).padEnd(16);
+    const catMatch = p.problem_signature.match(/^cat:(.+)$/);
+    const cat = catMatch?.[1] ?? p.problem_signature.slice(0, 16);
+    const label = getCategoryLabel(cat as PatternCategory);
+    const toolHint = getCategoryToolHint(cat as PatternCategory);
     const conf = p.confidence.toFixed(2);
     const times = `${p.times_matched}x`;
-    console.log(`║ ${sig} ${conf} · ${times.padStart(4)} ║`);
+    console.log(`║ ✓ ${cat.padEnd(20)}             ║`);
+    console.log(`║   "${label.slice(0, 24)}"            ║`);
+    console.log(`║   ${conf} · ${times.padStart(4)}${toolHint ? ` · ${toolHint}` : ""}              ║`);
   }
   if (failures.length > 0) {
     console.log("╠═══════════════════════════════╣");

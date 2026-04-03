@@ -8,6 +8,8 @@
 import { Agent } from "../agent";
 import type { KairosOuterLoop } from "../kairos/tick";
 import type { FrustrationDetector } from "../kairos/frustration";
+import type { PatternCategory } from "../self-model/types";
+import { getCategoryLabel, getCategoryToolHint } from "../self-model/types";
 import type { MemoryStack } from "../memory/stack";
 import type { SelfModelStore } from "../self-model/store";
 import type { PassportManager } from "../passport/loader";
@@ -361,9 +363,14 @@ function cmdCompile(ctx: CommandContext): string {
   ];
 
   for (const p of compiled.slice(0, 10)) {
-    lines.push(`\u25c8 ${p.problem_signature.slice(0, 50)}`);
+    const catMatch = p.problem_signature.match(/^cat:(.+)$/);
+    const cat = catMatch?.[1] ?? p.problem_signature.slice(0, 50);
+    const label = getCategoryLabel(cat as PatternCategory);
+    const toolHint = getCategoryToolHint(cat as PatternCategory);
+    lines.push(`\u25c8 ${cat} (${p.confidence.toFixed(2)}) — ${p.times_matched} runs`);
+    lines.push(`  "${label}"`);
     lines.push(`  Path: ${p.solution_path.join(" \u2192 ")}`);
-    lines.push(`  Confidence: ${Math.round(p.confidence * 100)}% | ${p.times_matched}x matched | ${p.avg_solve_time_ms}ms avg`);
+    if (toolHint) lines.push(`  Tool: ${toolHint}`);
     lines.push("");
   }
 
@@ -522,7 +529,11 @@ function cmdPassport(ctx: CommandContext): string {
     lines.push("(none yet)");
   } else {
     for (const pat of p.compiled_patterns.slice(0, 10)) {
-      lines.push(`${pat.id}. ${pat.pattern} \u2192 ${pat.solution_path.slice(0, 40)}`);
+      const cat = pat.category ?? "general";
+      const label = pat.category_label ?? cat;
+      lines.push(`\u25c8 ${cat} (${pat.confidence.toFixed(2)}) — ${pat.success_count + pat.failure_count}x`);
+      lines.push(`  "${label}"${pat.tool_hint ? ` · Tool: ${pat.tool_hint}` : ""}`);
+      if (pat.novel_matches > 0) lines.push(`  ${pat.novel_matches} novel inputs generalized`);
     }
   }
   lines.push("");

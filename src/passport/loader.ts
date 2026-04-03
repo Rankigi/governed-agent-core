@@ -12,6 +12,7 @@ import os from "os";
 import type {
   PassportData, CompiledPattern, EngineRecord, TransitionBrief,
 } from "./types";
+import { classifyInput, getCategoryLabel, getCategoryToolHint } from "../self-model/types";
 
 const PASSPORT_DIR = path.join(os.homedir(), ".rankigi", "passports");
 
@@ -471,8 +472,27 @@ export class PassportManager {
       data.compiled_patterns = data.compiled_patterns || [];
       data.trust_history = data.trust_history || [];
       data.schema_version = 1;
-      await this.save();
     }
+
+    // Schema v2: migrate string-based patterns to category-based
+    if (data.schema_version < 2) {
+      const now = new Date().toISOString();
+      for (const p of data.compiled_patterns) {
+        if (!p.category) {
+          const category = classifyInput(p.pattern);
+          p.category = category;
+          p.category_label = getCategoryLabel(category);
+          p.tool_hint = p.tool_hint ?? getCategoryToolHint(category);
+          p.example_inputs = p.example_inputs ?? [p.pattern];
+          p.novel_matches = p.novel_matches ?? 0;
+          p.last_matched_at = p.last_matched_at ?? p.compiled_at ?? now;
+        }
+      }
+      data.schema_version = 2;
+      console.log(`[PASSPORT] Migrated ${data.compiled_patterns.length} patterns to category-based format`);
+    }
+
+    await this.save();
     return data;
   }
 

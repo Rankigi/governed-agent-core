@@ -72,6 +72,118 @@ export interface TimingCurve {
 
 export type ReadinessTier = "bootstrapping" | "learning" | "competent" | "compiled";
 
+/* ── Category-Based Pattern Matching ──────────────────── */
+
+export type PatternCategory =
+  | "math_calculation"
+  | "geography_capital"
+  | "geography_fact"
+  | "memory_store"
+  | "memory_recall"
+  | "summarize_text"
+  | "explain_concept"
+  | "code_task"
+  | "web_search_needed"
+  | "conversational"
+  | "general";
+
+export interface PatternSignature {
+  category: PatternCategory;
+  keywords: string[];
+  tool_hint: string | null;
+  label: string;
+}
+
+export const PATTERN_SIGNATURES: PatternSignature[] = [
+  {
+    category: "math_calculation",
+    keywords: ["calculate", "what is", "×", "*", "+", "-", "/", "multiply", "divide", "add", "subtract", "sum", "product", "squared", "sqrt", "percent"],
+    tool_hint: "calculator",
+    label: "Math calculation tasks",
+  },
+  {
+    category: "geography_capital",
+    keywords: ["capital of", "capital city", "what is the capital"],
+    tool_hint: null,
+    label: "Capital city questions",
+  },
+  {
+    category: "geography_fact",
+    keywords: ["where is", "which country", "which city", "which continent", "population of", "located in"],
+    tool_hint: null,
+    label: "Geography fact questions",
+  },
+  {
+    category: "memory_store",
+    keywords: ["remember:", "remember that", "save that", "note that", "log that", "fyi:", "store:"],
+    tool_hint: "memory_file",
+    label: "Store user information",
+  },
+  {
+    category: "memory_recall",
+    keywords: ["what did i", "do you remember", "what is my", "recall", "what was", "remind me"],
+    tool_hint: null,
+    label: "Recall stored information",
+  },
+  {
+    category: "summarize_text",
+    keywords: ["summarize:", "summarize this", "tldr", "brief summary", "condense", "in short"],
+    tool_hint: null,
+    label: "Summarize given text",
+  },
+  {
+    category: "explain_concept",
+    keywords: ["what is", "explain", "how does", "why does", "what are", "describe"],
+    tool_hint: null,
+    label: "Explain a concept",
+  },
+  {
+    category: "code_task",
+    keywords: ["write code", "function that", "implement", "refactor", "debug this", "fix this code"],
+    tool_hint: null,
+    label: "Code generation tasks",
+  },
+  {
+    category: "web_search_needed",
+    keywords: ["latest", "current", "today", "recent", "news", "price of", "stock", "weather"],
+    tool_hint: "web_search",
+    label: "Web search needed",
+  },
+  {
+    category: "conversational",
+    keywords: ["hello", "hi", "hey", "how are you", "thanks", "thank you", "bye", "good"],
+    tool_hint: null,
+    label: "Conversational",
+  },
+];
+
+export function classifyInput(input: string): PatternCategory {
+  const lower = input.toLowerCase();
+  let bestCategory: PatternCategory = "general";
+  let bestScore = 0;
+  for (const sig of PATTERN_SIGNATURES) {
+    let score = 0;
+    for (const kw of sig.keywords) {
+      if (lower.includes(kw)) score++;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestCategory = sig.category;
+    }
+  }
+  return bestCategory;
+}
+
+export function getCategoryLabel(category: PatternCategory): string {
+  const sig = PATTERN_SIGNATURES.find((s) => s.category === category);
+  return sig?.label ?? "General tasks";
+}
+
+export function getCategoryToolHint(category: PatternCategory): string | null {
+  const sig = PATTERN_SIGNATURES.find((s) => s.category === category);
+  return sig?.tool_hint ?? null;
+}
+
 export interface SelfModel {
   agent_id: string;
   version: number;

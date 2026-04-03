@@ -2,7 +2,9 @@ import crypto from "crypto";
 import type {
   SelfModel, ToolPerformanceRecord, PatternRecord,
   FailureRecord, TimingRun, CoverageRecord, ReadinessTier,
+  PatternCategory,
 } from "./types";
+import { classifyInput, getCategoryLabel, getCategoryToolHint } from "./types";
 
 const COMPILE_THRESHOLD = Number(process.env.PATTERN_COMPILE_THRESHOLD ?? 5);
 const COMPILE_CONFIDENCE = Number(process.env.PATTERN_COMPILE_CONFIDENCE ?? 0.8);
@@ -163,14 +165,17 @@ export class SelfModelStore {
     success: boolean,
     chainIndex: number,
   ): void {
-    const hash = sha256(problemSignature);
+    // Classify input into category — key by category, not exact string
+    const category = classifyInput(problemSignature);
+    const categoryKey = `cat:${category}`;
+    const hash = sha256(categoryKey);
     const now = new Date().toISOString();
     let rec = this.model.pattern_library[hash];
 
     if (!rec) {
       rec = {
         pattern_hash: hash,
-        problem_signature: problemSignature,
+        problem_signature: categoryKey,
         solution_path: solutionPath,
         avg_solve_time_ms: solveTimeMs,
         confidence: 0.3,
@@ -196,7 +201,7 @@ export class SelfModelStore {
       if (!rec.compiled && rec.confidence >= COMPILE_CONFIDENCE && rec.times_matched >= COMPILE_THRESHOLD) {
         rec.compiled = true;
         this.model.timing_curve.compiled_patterns++;
-        console.log(`[OUTER] Pattern compiled: ${problemSignature.slice(0, 40)}... (${rec.confidence.toFixed(2)} confidence, ${rec.times_matched}x matched)`);
+        console.log(`[OUTER] Pattern compiled: ${category} (${rec.confidence.toFixed(2)} confidence, ${rec.times_matched}x matched)`);
       }
     }
 
@@ -316,7 +321,13 @@ export class SelfModelStore {
       .filter((p) => p.compiled)
       .sort((a, b) => b.times_matched - a.times_matched)
       .slice(0, 5)
-      .map((p) => `  COMPILED: ${p.problem_signature.slice(0, 50)}\n    Solution: ${p.solution_path.join(" → ")}\n    Confidence: ${Math.round(p.confidence * 100)}% | Used ${p.times_matched}x\n    → SKIP REASONING. Execute directly.`)
+      .map((p) => {
+        const catMatch = p.problem_signature.match(/^cat:(.+)$/);
+        const cat = catMatch?.[1] ?? p.problem_signature.slice(0, 50);
+        const label = getCategoryLabel(cat as PatternCategory);
+        const toolHint = getCategoryToolHint(cat as PatternCategory);
+        return `  COMPILED: ${cat} — "${label}"\n    Solution: ${p.solution_path.join(" → ")}\n    Confidence: ${Math.round(p.confidence * 100)}% | Used ${p.times_matched}x${toolHint ? ` | Tool: ${toolHint}` : ""}\n    → SKIP REASONING. Execute directly.`;
+      })
       .join("\n\n");
 
     const velocityLabel = tc.learning_velocity > 0
@@ -346,6 +357,7 @@ If novel → sample fully, the outer loop will learn it.`;
   loadPatterns(patterns: Array<{
     id: string;
     pattern: string;
+    category?: string;
     solution_path: string;
     confidence: number;
     compiled_at: string;
@@ -354,13 +366,25 @@ If novel → sample fully, the outer loop will learn it.`;
   }>): void {
     let loaded = 0;
     for (const p of patterns) {
-      // Use the pattern's id as hash key (it was originally the pattern_hash)
-      const hash = p.id;
-      if (this.model.pattern_library[hash]) continue; // already exists
+      // Migrate old string-based patterns to category-based
+      const category = p.category ?? classifyInput(p.pattern);
+      const categoryKey = `cat:${category}`;
+      const hash = sha256(categoryKey);
+
+      if (this.model.pattern_library[hash]) {
+        // Category already loaded — merge stats
+        const existing = this.model.pattern_library[hash];
+        existing.times_matched += p.success_count + p.failure_count;
+        existing.times_succeeded += p.success_count;
+        existing.confidence = existing.times_matched > 0
+          ? existing.times_succeeded / existing.times_matched
+          : p.confidence;
+        continue;
+      }
 
       this.model.pattern_library[hash] = {
         pattern_hash: hash,
-        problem_signature: p.pattern,
+        problem_signature: categoryKey,
         solution_path: p.solution_path.split(" → "),
         avg_solve_time_ms: 0,
         confidence: p.confidence,
@@ -381,9 +405,18 @@ If novel → sample fully, the outer loop will learn it.`;
   }
 
   findMatchingPattern(problemSignature: string): PatternRecord | null {
-    const hash = sha256(problemSignature);
+    // Category-based matching: classify input → find compiled pattern for that category
+    const category = classifyInput(problemSignature);
+    const categoryKey = `cat:${category}`;
+    const hash = sha256(categoryKey);
     const rec = this.model.pattern_library[hash];
-    if (rec && rec.compiled) return rec;
+    if (rec && rec.compiled && rec.confidence >= 0.8) return rec;
+
+    // Fallback: legacy exact-match for old patterns
+    const legacyHash = sha256(problemSignature);
+    const legacyRec = this.model.pattern_library[legacyHash];
+    if (legacyRec && legacyRec.compiled) return legacyRec;
+
     return null;
   }
 
@@ -391,12 +424,18 @@ If novel → sample fully, the outer loop will learn it.`;
   getCompiledPatterns(): Array<{
     id: string;
     pattern: string;
+    category: string;
+    category_label: string;
+    example_inputs: string[];
     solution_path: string;
+    tool_hint: string | null;
     confidence: number;
     compiled_at: string;
     compiled_by_engine: string;
     success_count: number;
     failure_count: number;
+    novel_matches: number;
+    last_matched_at: string;
   }> {
     const provider = process.env.LLM_PROVIDER || "ollama";
     const model = provider === "ollama"
@@ -407,16 +446,27 @@ If novel → sample fully, the outer loop will learn it.`;
 
     return Object.values(this.model.pattern_library)
       .filter((p) => p.compiled)
-      .map((p) => ({
-        id: p.pattern_hash,
-        pattern: p.problem_signature,
-        solution_path: p.solution_path.join(" → "),
-        confidence: p.confidence,
-        compiled_at: p.last_matched_at,
-        compiled_by_engine: `${provider}/${model}`,
-        success_count: p.times_succeeded,
-        failure_count: p.times_matched - p.times_succeeded,
-      }));
+      .map((p) => {
+        // Extract category from problem_signature (cat:xxx format)
+        const catMatch = p.problem_signature.match(/^cat:(.+)$/);
+        const category = (catMatch?.[1] ?? "general") as PatternCategory;
+        return {
+          id: p.pattern_hash,
+          pattern: p.problem_signature,
+          category,
+          category_label: getCategoryLabel(category),
+          example_inputs: [p.problem_signature].slice(0, 5),
+          solution_path: p.solution_path.join(" → "),
+          tool_hint: getCategoryToolHint(category),
+          confidence: p.confidence,
+          compiled_at: p.last_matched_at,
+          compiled_by_engine: `${provider}/${model}`,
+          success_count: p.times_succeeded,
+          failure_count: p.times_matched - p.times_succeeded,
+          novel_matches: 0,
+          last_matched_at: p.last_matched_at,
+        };
+      });
   }
 
   /** Return confidence score. */
