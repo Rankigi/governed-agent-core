@@ -82,10 +82,40 @@ async function main() {
   console.log(`  [PASSPORT] Engine: ${passportData.current_engine.provider}/${passportData.current_engine.model}`);
   console.log(`  [PASSPORT] Total runs (all engines): ${passportData.total_runs} | Patterns: ${passportData.compiled_patterns.length}`);
 
+  // Detect actual engine from .env
+  const actualProvider = process.env.LLM_PROVIDER
+    || (hasAnthropic ? "anthropic" : hasOpenAI ? "openai" : "ollama");
+  const actualModel = actualProvider === "ollama"
+    ? (process.env.OLLAMA_MODEL || "llama3.2:1b")
+    : actualProvider === "anthropic"
+      ? (process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6")
+      : (process.env.OPENAI_MODEL || "gpt-4o");
+
+  // Auto-switch engine if passport says different provider than .env
+  const passportEngine = passportData.current_engine;
+  if (passportEngine.provider !== actualProvider || passportEngine.model !== actualModel) {
+    console.log(`  [PASSPORT] Engine mismatch: passport=${passportEngine.provider}/${passportEngine.model} env=${actualProvider}/${actualModel}`);
+    await passport.switchEngine(
+      actualProvider,
+      actualModel,
+      `Auto-detected engine change on startup (${passportEngine.provider}/${passportEngine.model} → ${actualProvider}/${actualModel})`,
+      rankigi,
+    );
+    console.log(`  [PASSPORT] Engine switched to ${actualProvider}/${actualModel}`);
+  }
+
   // Boot agent
   const agent = new Agent();
   const selfModelStore = new SelfModelStore(agentId);
-  selfModelStore.load(null); // Fresh start — will persist after first run
+  selfModelStore.load(null); // Fresh in-memory — patterns loaded from passport below
+
+  // Inject compiled patterns from passport into self-model
+  const passportPatterns = passport.get().compiled_patterns;
+  if (passportPatterns.length > 0) {
+    selfModelStore.loadPatterns(passportPatterns);
+    console.log(`  [SELF-MODEL] Loaded ${passportPatterns.length} compiled patterns from passport`);
+  }
+
   const outerLoop = new OuterLoop(selfModelStore);
   outerLoop.start();
   agent.attachSelfModel(selfModelStore, outerLoop);

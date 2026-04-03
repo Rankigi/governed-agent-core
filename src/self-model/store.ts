@@ -342,6 +342,44 @@ If problem matches a COMPILED pattern above → use the solution path directly. 
 If novel → sample fully, the outer loop will learn it.`;
   }
 
+  /** Load compiled patterns from passport into the in-memory pattern library. */
+  loadPatterns(patterns: Array<{
+    id: string;
+    pattern: string;
+    solution_path: string;
+    confidence: number;
+    compiled_at: string;
+    success_count: number;
+    failure_count: number;
+  }>): void {
+    let loaded = 0;
+    for (const p of patterns) {
+      // Use the pattern's id as hash key (it was originally the pattern_hash)
+      const hash = p.id;
+      if (this.model.pattern_library[hash]) continue; // already exists
+
+      this.model.pattern_library[hash] = {
+        pattern_hash: hash,
+        problem_signature: p.pattern,
+        solution_path: p.solution_path.split(" → "),
+        avg_solve_time_ms: 0,
+        confidence: p.confidence,
+        times_matched: p.success_count + p.failure_count,
+        times_succeeded: p.success_count,
+        last_matched_at: p.compiled_at,
+        first_discovered_at: p.compiled_at,
+        chain_index_discovered: 0,
+        compiled: true,
+      };
+      loaded++;
+    }
+
+    if (loaded > 0) {
+      this.model.timing_curve.compiled_patterns += loaded;
+      this.dirty = true;
+    }
+  }
+
   findMatchingPattern(problemSignature: string): PatternRecord | null {
     const hash = sha256(problemSignature);
     const rec = this.model.pattern_library[hash];
