@@ -64,7 +64,7 @@ async function main() {
   const passport_hash = process.env.PASSPORT_HASH
     || createHash("sha256").update(agentId).digest("hex").slice(0, 16);
 
-  const passport = new PassportManager(passport_hash);
+  const passport = new PassportManager(passport_hash, rankigi);
   const passportData = await passport.load();
 
   // Seal beliefs into passport on first boot

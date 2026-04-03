@@ -22,14 +22,18 @@ interface RankigiRef {
     output: unknown;
     execution_result: string;
   }): Promise<void>;
+  pushPassport(data: Record<string, unknown>): Promise<boolean>;
+  pullPassport(): Promise<Record<string, unknown> | null>;
 }
 
 export class PassportManager {
   private data: PassportData | null = null;
   private passport_hash: string;
+  private rankigi: RankigiRef | null = null;
 
-  constructor(passport_hash: string) {
+  constructor(passport_hash: string, rankigi?: RankigiRef | null) {
     this.passport_hash = passport_hash;
+    this.rankigi = rankigi ?? null;
   }
 
   get passport_path(): string {
@@ -45,22 +49,53 @@ export class PassportManager {
   // ─────────────────────────────────────
 
   async load(): Promise<PassportData> {
+    // 1. Try cloud first (source of truth)
+    let cloudData: PassportData | null = null;
+    if (this.rankigi) {
+      const raw = await this.rankigi.pullPassport();
+      if (raw && typeof raw === "object" && raw.passport_hash) {
+        cloudData = raw as unknown as PassportData;
+        console.log(`[PASSPORT] Cloud: found (runs: ${cloudData.total_runs}, patterns: ${cloudData.compiled_patterns?.length ?? 0})`);
+      }
+    }
+
+    // 2. Try local disk (cache)
+    let localData: PassportData | null = null;
     try {
       const raw = await fs.readFile(this.passport_path, "utf-8");
-      this.data = JSON.parse(raw) as PassportData;
-      this.data = await this.migrate(this.data);
-
-      console.log(
-        `[PASSPORT] Loaded.` +
-        ` Engine history: ${this.data.engine_history.length} engines.` +
-        ` Patterns: ${this.data.compiled_patterns.length}.` +
-        ` Memory: ${this.data.memory_layer_count} layers.`,
-      );
-
-      return this.data;
+      localData = JSON.parse(raw) as PassportData;
+      console.log(`[PASSPORT] Local: found (runs: ${localData.total_runs}, patterns: ${localData.compiled_patterns?.length ?? 0})`);
     } catch {
+      // No local file
+    }
+
+    // 3. Merge or pick
+    if (cloudData && localData) {
+      this.data = this.merge(cloudData, localData);
+      console.log(`[PASSPORT] Merged cloud + local (runs: ${this.data.total_runs})`);
+    } else if (cloudData) {
+      this.data = cloudData;
+      // Fix memory_stack_path to local path
+      this.data.memory_stack_path = this.memory_path;
+    } else if (localData) {
+      this.data = localData;
+    } else {
       return this.create();
     }
+
+    this.data = await this.migrate(this.data);
+
+    // Sync back to both
+    await this.save();
+
+    console.log(
+      `[PASSPORT] Loaded.` +
+      ` Engine history: ${this.data.engine_history.length} engines.` +
+      ` Patterns: ${this.data.compiled_patterns.length}.` +
+      ` Memory: ${this.data.memory_layer_count} layers.`,
+    );
+
+    return this.data;
   }
 
   async create(): Promise<PassportData> {
@@ -129,9 +164,21 @@ export class PassportManager {
 
     this.data.last_updated = new Date().toISOString();
 
+    // 1. Local disk (fast, offline-safe)
     await fs.mkdir(path.dirname(this.passport_path), { recursive: true });
     await fs.writeFile(this.passport_path, JSON.stringify(this.data, null, 2));
-    console.log(`[PASSPORT] Saved. Total runs: ${this.data.total_runs}`);
+
+    // 2. Cloud sync (non-blocking — agent continues if RANKIGI is down)
+    if (this.rankigi) {
+      const synced = await this.rankigi.pushPassport(this.data as unknown as Record<string, unknown>);
+      if (synced) {
+        console.log(`[PASSPORT] Saved. Total runs: ${this.data.total_runs} (cloud synced)`);
+      } else {
+        console.log(`[PASSPORT] Saved. Total runs: ${this.data.total_runs} (local only)`);
+      }
+    } else {
+      console.log(`[PASSPORT] Saved. Total runs: ${this.data.total_runs} (local only)`);
+    }
   }
 
   /** Seal beliefs into the passport — called once at genesis */
@@ -359,6 +406,59 @@ export class PassportManager {
     });
 
     return brief;
+  }
+
+  // ─────────────────────────────────────
+  // MERGE — cloud + local reconciliation
+  // ─────────────────────────────────────
+
+  private merge(cloud: PassportData, local: PassportData): PassportData {
+    // Take the version with higher total_runs as base
+    const base = cloud.total_runs >= local.total_runs ? { ...cloud } : { ...local };
+
+    // Always use local memory path
+    base.memory_stack_path = this.memory_path;
+
+    // Take the higher values
+    base.total_runs = Math.max(cloud.total_runs, local.total_runs);
+    base.chain_index = Math.max(cloud.chain_index, local.chain_index);
+    base.memory_layer_count = Math.max(cloud.memory_layer_count, local.memory_layer_count);
+
+    // Combine compiled patterns (deduplicate by id)
+    const patternMap = new Map<string, CompiledPattern>();
+    for (const p of cloud.compiled_patterns ?? []) patternMap.set(p.id, p);
+    for (const p of local.compiled_patterns ?? []) {
+      const existing = patternMap.get(p.id);
+      if (!existing || p.success_count > existing.success_count) {
+        patternMap.set(p.id, p);
+      }
+    }
+    base.compiled_patterns = Array.from(patternMap.values());
+
+    // Combine engine history (deduplicate by started_at)
+    const engineMap = new Map<string, EngineRecord>();
+    for (const e of cloud.engine_history ?? []) engineMap.set(e.started_at, e);
+    for (const e of local.engine_history ?? []) engineMap.set(e.started_at, e);
+    base.engine_history = Array.from(engineMap.values())
+      .sort((a, b) => a.started_at.localeCompare(b.started_at));
+
+    // Take the most recent current_engine
+    base.current_engine = cloud.current_engine.runs_completed >= local.current_engine.runs_completed
+      ? cloud.current_engine
+      : local.current_engine;
+
+    // Take the most recent trust snapshot
+    base.current_trust = cloud.current_trust.recorded_at >= local.current_trust.recorded_at
+      ? cloud.current_trust
+      : local.current_trust;
+
+    // Preserve beliefs from whichever has them
+    if (!base.core_beliefs_hash && local.core_beliefs_hash) {
+      base.core_beliefs = local.core_beliefs;
+      base.core_beliefs_hash = local.core_beliefs_hash;
+    }
+
+    return base;
   }
 
   // ─────────────────────────────────────

@@ -130,6 +130,44 @@ class RankigiObserver {
     }
   }
 
+  async pushPassport(data: Record<string, unknown>): Promise<boolean> {
+    try {
+      await axios.post(`${this.baseUrl}/api/agents/passport/sync`, {
+        agent_id: this.agentId,
+        passport: data,
+      }, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.apiKey}`,
+        },
+        timeout: 10000,
+      });
+      return true;
+    } catch {
+      // Non-blocking — passport persists locally even if cloud sync fails
+      console.log("[RANKIGI] Passport cloud sync failed — local copy preserved");
+      return false;
+    }
+  }
+
+  async pullPassport(): Promise<Record<string, unknown> | null> {
+    try {
+      const res = await axios.get(`${this.baseUrl}/api/agents/passport`, {
+        headers: {
+          "Authorization": `Bearer ${this.apiKey}`,
+        },
+        params: { agent_id: this.agentId },
+        timeout: 10000,
+      });
+      if (res.data?.ok && res.data?.passport) {
+        return res.data.passport as Record<string, unknown>;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   async ping(): Promise<boolean> {
     try {
       await axios.get(`${this.baseUrl}/api/health`, { timeout: 5000 });
