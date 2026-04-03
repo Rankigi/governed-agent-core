@@ -127,6 +127,10 @@ async function main() {
   agent.attachMemoryStack(memoryStack);
   agent.attachPassport(passport);
 
+  // Wire ERIDU to pulse memory for prior context
+  const { attachMemory: attachERIDUMemory } = await import("./tools/eridu");
+  attachERIDUMemory(memoryStack);
+
   // Sync memory stats into passport
   const stackSize = memoryStack.getLayerCount();
   const foundationHash = memoryStack.getFoundationHash();

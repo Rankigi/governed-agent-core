@@ -16,6 +16,8 @@
 
 import crypto from "crypto";
 import { rankigi } from "../rankigi";
+import type { MemoryStack } from "../memory/stack";
+import type { PulseResult } from "../memory/types";
 
 function sha256(data: string): string {
   return crypto.createHash("sha256").update(data, "utf8").digest("hex");
@@ -264,6 +266,56 @@ export async function runERIDU(input: ERIDUInput): Promise<ERIDUOutput> {
 }
 
 // ─────────────────────────────────────
+// PULSE MEMORY INTEGRATION
+// ─────────────────────────────────────
+
+let _memoryStack: MemoryStack | null = null;
+
+/** Attach memory stack so ERIDU can pulse for prior context. */
+export function attachMemory(stack: MemoryStack): void {
+  _memoryStack = stack;
+}
+
+/**
+ * Pulse memory for similar states and convert surfaced layers
+ * into prior ERIDU cycles for context injection.
+ */
+async function pulseForPriorCycles(state: string): Promise<ERIDUCycle[]> {
+  if (!_memoryStack) return [];
+
+  try {
+    const pulse: PulseResult = await _memoryStack.pulse(state, {
+      max_surface: 3,
+      min_resonance: 25,
+      layer_types: ["task_history", "pattern"],
+    });
+
+    // Convert surfaced memory layers into synthetic prior cycles
+    return pulse.surfaced.map((layer) => ({
+      cycle_id: `memory_${layer.index.layer_hash.slice(0, 12)}`,
+      timestamp: layer.index.created_at,
+      input: {
+        state: layer.content.summary,
+        available_actions: [],
+        prior_cycles: [],
+      },
+      output: {
+        compressed_actions: layer.content.compiled_patterns ?? [],
+        adversarial_flags: [],
+        top_action: layer.content.compiled_patterns?.[0] ?? "",
+        confidence: layer.content.confidence_snapshot ?? 50,
+        reasoning: `From memory: ${layer.content.summary.slice(0, 80)}`,
+        simulation_depth: 0,
+      },
+      result: layer.content.compiled_patterns?.[0],
+      model_update: layer.content.delta?.outcome as string | undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ─────────────────────────────────────
 // TOOL INTERFACE
 // ─────────────────────────────────────
 
@@ -294,10 +346,13 @@ export const eridu = {
       return "Error: ERIDU requires 'state' and 'available_actions' (non-empty array).";
     }
 
+    // Pulse memory for prior context before running ERIDU
+    const memoryCycles = await pulseForPriorCycles(args.state);
+
     const output = await runERIDU({
       state: args.state,
       available_actions: args.available_actions,
-      prior_cycles: [],
+      prior_cycles: memoryCycles,
       context: args.context,
     });
 
