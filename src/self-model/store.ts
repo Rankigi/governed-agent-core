@@ -348,4 +348,41 @@ If novel → sample fully, the outer loop will learn it.`;
     if (rec && rec.compiled) return rec;
     return null;
   }
+
+  /** Return all compiled patterns in passport-compatible format. */
+  getCompiledPatterns(): Array<{
+    id: string;
+    pattern: string;
+    solution_path: string;
+    confidence: number;
+    compiled_at: string;
+    compiled_by_engine: string;
+    success_count: number;
+    failure_count: number;
+  }> {
+    const provider = process.env.LLM_PROVIDER || "ollama";
+    const model = provider === "ollama"
+      ? (process.env.OLLAMA_MODEL || "llama3.2:1b")
+      : provider === "anthropic"
+        ? (process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6")
+        : (process.env.OPENAI_MODEL || "gpt-4o");
+
+    return Object.values(this.model.pattern_library)
+      .filter((p) => p.compiled)
+      .map((p) => ({
+        id: p.pattern_hash,
+        pattern: p.problem_signature,
+        solution_path: p.solution_path.join(" → "),
+        confidence: p.confidence,
+        compiled_at: p.last_matched_at,
+        compiled_by_engine: `${provider}/${model}`,
+        success_count: p.times_succeeded,
+        failure_count: p.times_matched - p.times_succeeded,
+      }));
+  }
+
+  /** Return confidence score. */
+  getConfidence(): number {
+    return this.model.confidence_score;
+  }
 }

@@ -214,8 +214,17 @@ async function main() {
     rl.prompt();
   });
 
-  rl.on("close", () => {
-    console.log("\n[SHUTDOWN] Readline closed.");
+  rl.on("close", async () => {
+    console.log("\n[SHUTDOWN] Readline closed. Saving patterns...");
+    const patterns = selfModelStore.getCompiledPatterns();
+    await passport.updateAfterRun({
+      new_patterns: patterns,
+      memory_layers_filed: memoryStack.getLayerCount(),
+      confidence: selfModelStore.getConfidence(),
+      chain_index: 0,
+      last_event_hash: "",
+    });
+    console.log(`[SHUTDOWN] Saved. Patterns: ${patterns.length}`);
     kairos.stop();
     outerLoop.stop();
     process.exit(0);
@@ -228,9 +237,21 @@ async function main() {
     }
   }, 30000);
 
-  // Graceful shutdown
-  process.on("SIGINT", () => {
-    console.log("\n[SHUTDOWN] Stopping KAIROS...");
+  // Graceful shutdown — save patterns before exit
+  process.on("SIGINT", async () => {
+    console.log("\n[SHUTDOWN] Saving patterns to passport...");
+
+    const patterns = selfModelStore.getCompiledPatterns();
+    await passport.updateAfterRun({
+      new_patterns: patterns,
+      memory_layers_filed: memoryStack.getLayerCount(),
+      confidence: selfModelStore.getConfidence(),
+      chain_index: 0,
+      last_event_hash: "",
+    });
+
+    console.log(`[SHUTDOWN] Saved. Patterns: ${patterns.length}`);
+
     kairos.stop();
     outerLoop.stop();
     console.log("[SHUTDOWN] Agent stopped.");

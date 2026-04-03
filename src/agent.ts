@@ -207,12 +207,13 @@ export class Agent {
           this.lastLayerHash = filed.index.layer_hash;
         }
 
-        // Update passport after every run
-        if (this.passport) {
+        // Update passport after every run — write compiled patterns to disk
+        if (this.passport && this.selfModelStore) {
+          const compiledPatterns = this.selfModelStore.getCompiledPatterns();
           await this.passport.updateAfterRun({
-            new_patterns: [],
+            new_patterns: compiledPatterns,
             memory_layers_filed: this.memoryStack ? 1 : 0,
-            confidence: this.selfModelStore?.getModel().confidence_score ?? 0,
+            confidence: this.selfModelStore.getConfidence(),
             chain_index: 0,
             last_event_hash: "",
           });
