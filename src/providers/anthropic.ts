@@ -172,32 +172,27 @@ export class AnthropicProvider extends BaseLLMProvider {
     for (const m of stripped) {
       const prev = merged[merged.length - 1];
       if (prev && prev.role === m.role) {
-        // Merge content: both could be string or array
         const prevContent = typeof prev.content === "string" ? prev.content : "";
         const curContent = typeof m.content === "string" ? m.content : "";
         if (prevContent && curContent) {
           prev.content = prevContent + "\n" + curContent;
         }
-        // If either is an array, skip merge (complex case) — keep the later one
         continue;
       }
       merged.push(m);
     }
 
-    // Pass 3: Drop any trailing user message with only tool_results that are orphaned
-    // (tool_results for tool_use blocks we just stripped)
+    // Pass 3: Drop orphaned tool_result user messages
     const final: MessageParam[] = [];
-    for (let i = 0; i < merged.length; i++) {
-      const m = merged[i];
+    for (const m of merged) {
       if (m.role === "user" && Array.isArray(m.content)) {
         const onlyToolResults = m.content.every(
           (b) => typeof b === "object" && "type" in b && b.type === "tool_result",
         );
         if (onlyToolResults) {
-          // Check if the previous message is an assistant with matching tool_use blocks
           const prev = final[final.length - 1];
           if (!prev || prev.role !== "assistant" || !Array.isArray(prev.content)) {
-            continue; // Orphaned tool_results — skip
+            continue;
           }
           const prevToolIds = new Set(
             (prev.content as Array<{ type: string; id?: string }>)
@@ -208,7 +203,7 @@ export class AnthropicProvider extends BaseLLMProvider {
             if (typeof b !== "object" || !("type" in b) || b.type !== "tool_result") return true;
             return prevToolIds.has((b as ToolResultBlockParam).tool_use_id);
           });
-          if (!allHaveParent) continue; // Orphaned — skip
+          if (!allHaveParent) continue;
         }
       }
       final.push(m);
