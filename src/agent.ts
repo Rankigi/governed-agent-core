@@ -234,17 +234,23 @@ export class Agent {
         });
       }
 
-      // Execute all tools in parallel
+      // Execute all tools in parallel — individual failures produce error results,
+      // never crash the batch (every tool_use MUST get a tool_result)
       const toolResults = await Promise.all(
         response.tool_calls.map(async (toolCall) => {
           const toolStart = Date.now();
-          const result = await executeTool(toolCall.name, toolCall.arguments);
+          let result: string;
+          try {
+            result = await executeTool(toolCall.name, toolCall.arguments);
+          } catch (err) {
+            result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+          }
           const toolLatency = Date.now() - toolStart;
           return { toolCall, result, toolLatency };
         }),
       );
 
-      // Add ALL tool results to memory as a batch (prevents mid-batch trimming)
+      // Add ALL tool results to memory as a batch — every tool_use gets a tool_result
       this.memory.addToolResults(
         toolResults.map(({ toolCall, result }) => ({
           toolCallId: toolCall.id,

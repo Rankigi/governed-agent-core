@@ -123,9 +123,11 @@ export class AnthropicProvider extends BaseLLMProvider {
    * Safety net: strip any assistant tool_use blocks that lack
    * a corresponding tool_result in the conversation.
    * Prevents 400 "tool_use ids without tool_result blocks".
+   * Also merges consecutive same-role messages that can result
+   * from stripping (Anthropic requires alternating roles).
    */
   private sanitizeMessages(messages: MessageParam[]): MessageParam[] {
-    // Collect all tool_result ids
+    // Collect all tool_result ids from user messages
     const resultIds = new Set<string>();
     for (const m of messages) {
       if (m.role === "user" && Array.isArray(m.content)) {
@@ -137,8 +139,8 @@ export class AnthropicProvider extends BaseLLMProvider {
       }
     }
 
-    // Strip orphaned tool_use blocks from assistant messages
-    const sanitized: MessageParam[] = [];
+    // Pass 1: Strip orphaned tool_use blocks from assistant messages
+    const stripped: MessageParam[] = [];
     for (const m of messages) {
       if (m.role === "assistant" && Array.isArray(m.content)) {
         const hasToolUse = m.content.some(
@@ -146,28 +148,72 @@ export class AnthropicProvider extends BaseLLMProvider {
         );
 
         if (hasToolUse) {
-          // Check if ALL tool_use ids have matching results
           const allMatched = m.content.every((b) => {
             if (typeof b !== "object" || !("type" in b) || b.type !== "tool_use") return true;
             return resultIds.has((b as ToolUseBlockParam).id);
           });
 
           if (!allMatched) {
-            // Keep text blocks only, drop tool_use blocks
             const textBlocks = m.content.filter(
               (b) => typeof b === "object" && "type" in b && b.type === "text",
             );
             if (textBlocks.length > 0) {
-              sanitized.push({ role: "assistant", content: textBlocks });
+              stripped.push({ role: "assistant", content: textBlocks });
             }
-            // If no text blocks either, skip the message entirely
             continue;
           }
         }
       }
-      sanitized.push(m);
+      stripped.push(m);
     }
 
-    return sanitized;
+    // Pass 2: Merge consecutive same-role messages (Anthropic requires alternating)
+    const merged: MessageParam[] = [];
+    for (const m of stripped) {
+      const prev = merged[merged.length - 1];
+      if (prev && prev.role === m.role) {
+        // Merge content: both could be string or array
+        const prevContent = typeof prev.content === "string" ? prev.content : "";
+        const curContent = typeof m.content === "string" ? m.content : "";
+        if (prevContent && curContent) {
+          prev.content = prevContent + "\n" + curContent;
+        }
+        // If either is an array, skip merge (complex case) — keep the later one
+        continue;
+      }
+      merged.push(m);
+    }
+
+    // Pass 3: Drop any trailing user message with only tool_results that are orphaned
+    // (tool_results for tool_use blocks we just stripped)
+    const final: MessageParam[] = [];
+    for (let i = 0; i < merged.length; i++) {
+      const m = merged[i];
+      if (m.role === "user" && Array.isArray(m.content)) {
+        const onlyToolResults = m.content.every(
+          (b) => typeof b === "object" && "type" in b && b.type === "tool_result",
+        );
+        if (onlyToolResults) {
+          // Check if the previous message is an assistant with matching tool_use blocks
+          const prev = final[final.length - 1];
+          if (!prev || prev.role !== "assistant" || !Array.isArray(prev.content)) {
+            continue; // Orphaned tool_results — skip
+          }
+          const prevToolIds = new Set(
+            (prev.content as Array<{ type: string; id?: string }>)
+              .filter((b) => b.type === "tool_use" && b.id)
+              .map((b) => b.id!),
+          );
+          const allHaveParent = m.content.every((b) => {
+            if (typeof b !== "object" || !("type" in b) || b.type !== "tool_result") return true;
+            return prevToolIds.has((b as ToolResultBlockParam).tool_use_id);
+          });
+          if (!allHaveParent) continue; // Orphaned — skip
+        }
+      }
+      final.push(m);
+    }
+
+    return final;
   }
 }
