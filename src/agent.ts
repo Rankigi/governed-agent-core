@@ -222,31 +222,45 @@ export class Agent {
         return content;
       }
 
-      // Tool calls — execute each
+      // Tool calls — execute ALL in parallel, then add ALL results as a batch
       this.memory.addAssistantMessage(response.content ?? "", response.tool_calls);
 
+      // Notify outer loop — all tool calls starting
       for (const toolCall of response.tool_calls) {
-        const toolStart = Date.now();
-
-        // Notify outer loop — tool call start
-        await this.outerLoop?.onChainEvent({
+        this.outerLoop?.onChainEvent({
           action: "tool_call_start",
           payload: { tool_id: toolCall.name, tool_name: toolCall.name, run_id: runId },
           occurred_at: new Date().toISOString(),
         });
+      }
 
-        const result = await executeTool(toolCall.name, toolCall.arguments);
-        this.memory.addToolResult(toolCall.id, result);
+      // Execute all tools in parallel
+      const toolResults = await Promise.all(
+        response.tool_calls.map(async (toolCall) => {
+          const toolStart = Date.now();
+          const result = await executeTool(toolCall.name, toolCall.arguments);
+          const toolLatency = Date.now() - toolStart;
+          return { toolCall, result, toolLatency };
+        }),
+      );
+
+      // Add ALL tool results to memory as a batch (prevents mid-batch trimming)
+      this.memory.addToolResults(
+        toolResults.map(({ toolCall, result }) => ({
+          toolCallId: toolCall.id,
+          content: result,
+        })),
+      );
+
+      for (const { toolCall } of toolResults) {
         toolsUsed.push(toolCall.name);
-
-        // Frustration: record tool call
         if (this.frustration) {
           this.frustration.recordToolCall(toolCall.name);
         }
+      }
 
-        const toolLatency = Date.now() - toolStart;
-
-        // Notify outer loop — tool call complete
+      // Notify outer loop — all tool calls complete
+      for (const { toolCall, result, toolLatency } of toolResults) {
         await this.outerLoop?.onChainEvent({
           action: "tool_call_complete",
           payload: {

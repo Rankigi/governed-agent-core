@@ -101,6 +101,14 @@ export class Memory {
     this.trim();
   }
 
+  /** Add multiple tool results as a batch — trim only once after all are added */
+  addToolResults(results: { toolCallId: string; content: string }[]): void {
+    for (const r of results) {
+      this.messages.push({ role: "tool", content: r.content, tool_call_id: r.toolCallId });
+    }
+    this.trim();
+  }
+
   getMessages(): Message[] {
     return [...this.messages];
   }
