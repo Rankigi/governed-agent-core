@@ -157,6 +157,21 @@ async function main() {
   agent.attachMemoryStack(memoryStack);
   agent.attachPassport(passport);
 
+  // Initialize MemOS sidecar (RANKIGI-governed). Optional — falls back to Akashic.
+  {
+    const { memosClient } = await import("./memory/memos-client");
+    const reachable = await memosClient.ping();
+    if (reachable) {
+      console.log("  [MEMOS] Connected — MemOS memory active");
+      console.log("  [MEMOS] Governed by RANKIGI sidecar");
+      // Register the agent's user/cube (idempotent on the MemOS side).
+      await memosClient.createUser(agentId);
+      agent.attachMemOS(memosClient);
+    } else {
+      console.log("  [MEMOS] Unreachable — using Akashic Pulse only");
+    }
+  }
+
   // Wire ERIDU to pulse memory for prior context
   const { attachMemory: attachERIDUMemory } = await import("./tools/eridu");
   attachERIDUMemory(memoryStack);

@@ -8,6 +8,7 @@ import type { OuterLoop } from "./self-model/outer-loop";
 import type { FrustrationDetector } from "./kairos/frustration";
 import type { MemoryStack } from "./memory/stack";
 import type { PassportManager } from "./passport/loader";
+import { MemOSClient, memosClient } from "./memory/memos-client";
 
 const MAX_ITERATIONS = 10;
 
@@ -23,6 +24,7 @@ export class Agent {
   private frustration: FrustrationDetector | null = null;
   private memoryStack: MemoryStack | null = null;
   private passport: PassportManager | null = null;
+  private memos: MemOSClient | null = null;
   private lastLayerHash: string | null = null;
   private runCounter = 0;
 
@@ -53,19 +55,45 @@ export class Agent {
     this.passport = pm;
   }
 
+  /** Attach the MemOS sidecar (RANKIGI-governed). */
+  attachMemOS(client: MemOSClient): void {
+    this.memos = client;
+  }
+
   async run(userMessage: string): Promise<string> {
     const runId = crypto.randomUUID();
     const runStart = Date.now();
     this.runCounter++;
     const toolsUsed: string[] = [];
+    const agentId = process.env.RANKIGI_AGENT_ID ?? "UNREGISTERED";
 
     // 1. Refresh system prompt with self-model epistemic summary
     if (this.selfModelStore) {
       this.memory.setEpistemicContext(this.selfModelStore.getEpistemicSummary());
     }
 
-    // 2. PULSE memory for context before processing
-    if (this.memoryStack) {
+    // 2. PULSE memory for context before processing.
+    // Prefer MemOS sidecar; fall back to Akashic Pulse stack if MemOS is unreachable.
+    let memoryContextSet = false;
+    if (this.memos && this.passport && this.memos.isAvailable()) {
+      try {
+        const conversationId = `run-${this.runCounter}`;
+        const result = await this.memos.search(userMessage, agentId, conversationId);
+        const ctx = MemOSClient.extractContext(result);
+        if (ctx) {
+          this.memory.setMemoryContext(`[MEMOS]\n${ctx}`);
+          memoryContextSet = true;
+        }
+      } catch (err) {
+        console.log(
+          `[MEMORY] MemOS search threw — falling back to Akashic Pulse: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else if (this.memos && !this.memos.isAvailable()) {
+      console.log(`[MEMORY] MemOS unavailable — falling back to Akashic Pulse`);
+    }
+
+    if (!memoryContextSet && this.memoryStack) {
       const pulse = await this.memoryStack.pulse(userMessage, {
         max_surface: 3,
         min_resonance: 25,
@@ -171,6 +199,24 @@ export class Agent {
           },
           occurred_at: new Date().toISOString(),
         });
+
+        // MemOS sidecar: file the conversation turn (user + assistant)
+        if (this.memos && this.memos.isAvailable()) {
+          try {
+            await this.memos.add(
+              [
+                { role: "user", content: userMessage },
+                { role: "assistant", content },
+              ],
+              agentId,
+              `run-${this.runCounter}`,
+            );
+          } catch (err) {
+            console.log(
+              `[MEMORY] MemOS add threw — continuing with Akashic only: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
 
         // Subconscious files the run to Akashic memory
         if (this.memoryStack) {
