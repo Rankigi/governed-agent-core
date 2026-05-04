@@ -7,6 +7,7 @@ import {
   type LLMResponse,
   type ToolCall,
 } from "./base";
+import { httpsAgent } from "../lib/proxy";
 
 export class AnthropicProvider extends BaseLLMProvider {
   name = "anthropic";
@@ -15,7 +16,10 @@ export class AnthropicProvider extends BaseLLMProvider {
 
   constructor() {
     super();
-    this.client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    this.client = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      ...(httpsAgent ? { httpAgent: httpsAgent } : {}),
+    });
   }
 
   isAvailable(): boolean {
@@ -121,3 +125,4 @@ export class AnthropicProvider extends BaseLLMProvider {
   }
 
 }
+                                      

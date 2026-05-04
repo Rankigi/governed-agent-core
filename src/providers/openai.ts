@@ -6,6 +6,7 @@ import {
   type LLMResponse,
   type ToolCall,
 } from "./base";
+import { httpsAgent } from "../lib/proxy";
 
 export class OpenAIProvider extends BaseLLMProvider {
   name = "openai";
@@ -14,7 +15,10 @@ export class OpenAIProvider extends BaseLLMProvider {
 
   constructor() {
     super();
-    this.client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    this.client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      ...(httpsAgent ? { httpAgent: httpsAgent } : {}),
+    });
   }
 
   isAvailable(): boolean {

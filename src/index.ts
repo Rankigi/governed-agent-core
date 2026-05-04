@@ -1,6 +1,10 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+// Must run BEFORE any module that constructs an HTTP client.
+// No-op when HTTPS_PROXY / HTTP_PROXY are unset.
+import "./lib/proxy";
+
 import { createHash } from "crypto";
 import readline from "readline";
 import { Agent } from "./agent";

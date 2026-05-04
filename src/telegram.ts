@@ -1,5 +1,6 @@
 import TelegramBot from "node-telegram-bot-api";
 import { handleCommand, type CommandContext } from "./commands/handler";
+import { proxyUrl } from "./lib/proxy";
 
 export class TelegramInterface {
   private bot: TelegramBot;
@@ -9,7 +10,13 @@ export class TelegramInterface {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required");
 
-    this.bot = new TelegramBot(token, { polling: true });
+    // node-telegram-bot-api uses the `request` library, which only honors
+    // an explicit `proxy` option — not HTTPS_PROXY env vars.
+    const options: TelegramBot.ConstructorOptions = { polling: true };
+    if (proxyUrl) {
+      options.request = { proxy: proxyUrl } as TelegramBot.ConstructorOptions["request"];
+    }
+    this.bot = new TelegramBot(token, options);
     this.ctx = ctx;
   }
 
