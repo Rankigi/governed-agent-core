@@ -14,6 +14,7 @@
  * exactly as before. Import this module FIRST, before any code that
  * constructs HTTP clients.
  */
+import fs from "fs";
 import axios from "axios";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { HttpProxyAgent } from "http-proxy-agent";
@@ -25,7 +26,12 @@ export const proxyUrl: string | undefined =
   process.env.HTTP_PROXY ||
   process.env.http_proxy;
 
-export const httpsAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+const caPath = process.env.NODE_EXTRA_CA_CERTS;
+const ca = caPath && fs.existsSync(caPath)
+  ? fs.readFileSync(caPath)
+  : undefined;
+
+export const httpsAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl, { ca }) : undefined;
 export const httpAgent = proxyUrl ? new HttpProxyAgent(proxyUrl) : undefined;
 
 if (proxyUrl) {
