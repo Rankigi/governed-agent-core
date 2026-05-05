@@ -44,7 +44,10 @@ if (proxyUrl) {
 
   // 2. undici / native fetch — Node 18+ fetch is undici under the hood.
   //    setGlobalDispatcher routes every fetch() through the proxy.
-  setGlobalDispatcher(new ProxyAgent(proxyUrl));
+  setGlobalDispatcher(new ProxyAgent({
+    uri: proxyUrl,
+    requestTls: { ca },
+  }));
 
   console.log(`[PROXY] Routing all outbound HTTP through ${proxyUrl}`);
 }
