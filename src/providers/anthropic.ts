@@ -16,10 +16,12 @@ export class AnthropicProvider extends BaseLLMProvider {
 
   constructor() {
     super();
-    this.client = new Anthropic({
+    const options = {
       apiKey: process.env.ANTHROPIC_API_KEY,
       ...(httpsAgent ? { httpAgent: httpsAgent } : {}),
-    });
+    };
+    console.log("[ANTHROPIC] Client created with httpAgent:", !!options?.httpAgent);
+    this.client = new Anthropic(options);
   }
 
   isAvailable(): boolean {

@@ -31,6 +31,11 @@ const ca = caPath && fs.existsSync(caPath)
   ? fs.readFileSync(caPath)
   : undefined;
 
+console.log("[PROXY] Module loaded");
+console.log("[PROXY] HTTPS_PROXY:", process.env.HTTPS_PROXY);
+console.log("[PROXY] CA cert path:", process.env.NODE_EXTRA_CA_CERTS);
+console.log("[PROXY] HttpsProxyAgent ca loaded:", !!ca);
+
 export const httpsAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl, { ca }) : undefined;
 export const httpAgent = proxyUrl ? new HttpProxyAgent(proxyUrl) : undefined;
 
